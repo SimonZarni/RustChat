@@ -2,7 +2,7 @@
 
 ## 1. Purpose and status
 
-This document describes the intended high-level architecture of RustChat. The project is at the planning stage; implementation details must be verified against the code as it is developed.
+This document describes the intended high-level architecture of RustChat. The project is in early implementation (Phase 1): the workspace layering and the accounts, sessions and rate-limiting slice exist, while everything else here is still intended design. Verify implementation details against the code.
 
 RustChat is a self-hostable real-time communication platform with a Rust backend and a shared React frontend for web and desktop.
 
