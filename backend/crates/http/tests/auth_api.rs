@@ -1,19 +1,25 @@
 //! End-to-end API tests: real router, real PostgreSQL, real Argon2id.
 //! Requires `DATABASE_URL` (see README "Local services").
 
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
 use axum::{
     Router,
     body::Body,
+    extract::ConnectInfo,
     http::{HeaderMap, Method, Request, StatusCode, header},
 };
 use http_body_util::BodyExt;
-use rustchat_application::auth::{AuthConfig, AuthService, RegistrationPolicy};
-use rustchat_http::{AppState, HttpConfig, router};
+use rustchat_application::{
+    auth::{AuthConfig, AuthService, RegistrationPolicy},
+    ports::RateLimitRule,
+    ratelimit::RateLimitConfig,
+};
+use rustchat_http::{AppState, ClientIpSource, HttpConfig, router};
 use rustchat_infrastructure::{
     MIGRATOR,
     postgres::{PgSessionRepository, PgUserRepository},
+    ratelimit::InMemoryRateLimiter,
     security::{Argon2Hasher, OsTokenService, SystemClock},
 };
 use serde_json::{Value, json};
@@ -23,6 +29,21 @@ use tower::ServiceExt;
 const ORIGIN: &str = "https://chat.example.test";
 const PASSWORD: &str = "correct horse battery";
 const COOKIE_NAME: &str = "__Host-rustchat_session";
+const PEER: &str = "203.0.113.50:40000";
+
+/// Limits high enough that these tests, which are not about rate limiting,
+/// never reach them. Rate limiting is covered in `rate_limit_api.rs`.
+fn generous_limits() -> RateLimitConfig {
+    let rule = RateLimitRule {
+        max: 10_000,
+        window: time::Duration::hours(1),
+    };
+    RateLimitConfig {
+        login_per_ip: rule,
+        login_failures_per_user: rule,
+        register_per_ip: rule,
+    }
+}
 
 fn app_with(pool: PgPool, registration: RegistrationPolicy) -> Router {
     let session_ttl = time::Duration::days(30);
@@ -33,9 +54,11 @@ fn app_with(pool: PgPool, registration: RegistrationPolicy) -> Router {
         Arc::new(Argon2Hasher::with_costs(8, 1, 1).unwrap()),
         Arc::new(OsTokenService),
         Arc::new(SystemClock),
+        Arc::new(InMemoryRateLimiter::new()),
         AuthConfig {
             registration,
             session_ttl,
+            rate_limits: generous_limits(),
         },
     );
     router(AppState::new(
@@ -44,6 +67,7 @@ fn app_with(pool: PgPool, registration: RegistrationPolicy) -> Router {
             allowed_origins: vec![ORIGIN.to_owned()],
             cookie_secure: true,
             session_ttl,
+            client_ip: ClientIpSource::Peer,
         },
     ))
 }
@@ -107,11 +131,11 @@ async fn send(app: &Router, call: Call<'_>) -> Reply {
         }
         None => Body::empty(),
     };
-    let response = app
-        .clone()
-        .oneshot(builder.body(body).unwrap())
-        .await
-        .unwrap();
+    let mut request = builder.body(body).unwrap();
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(PEER.parse::<SocketAddr>().unwrap()));
+    let response = app.clone().oneshot(request).await.unwrap();
     let status = response.status();
     let headers = response.headers().clone();
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
@@ -543,13 +567,16 @@ async fn unknown_api_routes_return_a_structured_404(pool: PgPool) {
 }
 
 async fn send_raw(app: &Router, uri: &str, body: &str, content_type: &str) -> Reply {
-    let request = Request::builder()
+    let mut request = Request::builder()
         .method(Method::POST)
         .uri(uri)
         .header(header::ORIGIN, ORIGIN)
         .header(header::CONTENT_TYPE, content_type)
         .body(Body::from(body.to_owned()))
         .unwrap();
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(PEER.parse::<SocketAddr>().unwrap()));
     let response = app.clone().oneshot(request).await.unwrap();
     let status = response.status();
     let headers = response.headers().clone();

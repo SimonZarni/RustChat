@@ -58,11 +58,22 @@ These endpoints exist (`backend/crates/http`). All other endpoints above remain 
 - Session cookie: `__Host-rustchat_session` (`rustchat_session` when `RUSTCHAT_COOKIE_SECURE=false`, local development only). `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/`, `Max-Age` equal to the session lifetime. The value is a 256-bit random token; only its SHA-256 is stored server-side.
 - CSRF: every non-`GET`/`HEAD`/`OPTIONS` request under `/api/v1` must carry an `Origin` header exactly matching an entry in `RUSTCHAT_ALLOWED_ORIGINS`, otherwise `403 ORIGIN_NOT_ALLOWED`. This includes login and register.
 - Responses under `/api/v1` carry `Cache-Control: no-store`.
+- Rate limiting (see below): `429 RATE_LIMITED` with a `Retry-After` header (whole seconds).
 - Failed login is the same `401 INVALID_CREDENTIALS` whether the account exists, the username is malformed or the password is wrong, and unknown accounts still pay the hashing cost. Registration necessarily reveals whether a username is taken (`409 USERNAME_TAKEN`).
 
-**Error codes in use:** `VALIDATION_ERROR` (422), `USERNAME_TAKEN` (409), `REGISTRATION_CLOSED` (403), `INVALID_CREDENTIALS` (401), `UNAUTHENTICATED` (401), `ORIGIN_NOT_ALLOWED` (403), `BAD_REQUEST` (400/415/422), `PAYLOAD_TOO_LARGE` (413), `NOT_FOUND` (404), `INTERNAL` (500).
+**Rate limits** (fixed windows, in-process, defaults in `rustchat_application::ratelimit`):
 
-**Not yet implemented:** rate limiting and lockout on authentication endpoints, session idle timeout and rotation, WebSocket authentication, password change and reset, MFA.
+| Limit | Counts | Default |
+|---|---|---|
+| Login per client network | every attempt, any outcome | 30 per 15 minutes |
+| Login per username | failed attempts only; a successful login clears it | 10 per 15 minutes |
+| Register per client network | every attempt, any outcome | 5 per hour |
+
+Limits are checked before any password hashing, so a limited request costs almost nothing. Usernames are case-folded and counted whether or not the account exists, so a `429` never reveals which accounts exist. A client network is the IPv4 address or the IPv6 /64 prefix. By default it is the TCP peer address and `X-Forwarded-For` is ignored; set `RUSTCHAT_TRUSTED_PROXY_HOPS=N` only when the server is reachable exclusively through N reverse proxies, in which case the entry N places from the right of `X-Forwarded-For` is used. If that header is missing or malformed the peer address is used. Other endpoints are not rate limited yet.
+
+**Error codes in use:** `VALIDATION_ERROR` (422), `USERNAME_TAKEN` (409), `REGISTRATION_CLOSED` (403), `INVALID_CREDENTIALS` (401), `UNAUTHENTICATED` (401), `ORIGIN_NOT_ALLOWED` (403), `BAD_REQUEST` (400/415/422), `PAYLOAD_TOO_LARGE` (413), `RATE_LIMITED` (429), `NOT_FOUND` (404), `INTERNAL` (500).
+
+**Not yet implemented:** rate limits on other endpoints, shared (multi-instance) rate limit state, session idle timeout and rotation, WebSocket authentication, password change and reset, MFA.
 
 ## 3. Request and response conventions
 

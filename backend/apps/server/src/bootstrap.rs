@@ -1,14 +1,16 @@
 //! Composition root: builds concrete dependencies and runs the server.
 
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
 use rustchat_application::{
     auth::{AuthConfig, AuthService},
     error::AppError,
+    ratelimit::RateLimitConfig,
 };
 use rustchat_http::{AppState, HttpConfig, router};
 use rustchat_infrastructure::{
     postgres::{self, PgSessionRepository, PgUserRepository},
+    ratelimit::InMemoryRateLimiter,
     security::{Argon2Hasher, OsTokenService, SystemClock},
 };
 use tokio::net::TcpListener;
@@ -38,9 +40,12 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(Argon2Hasher::new()?),
         Arc::new(OsTokenService),
         Arc::new(SystemClock),
+        // Per-process limits; see InMemoryRateLimiter for the multi-instance caveat.
+        Arc::new(InMemoryRateLimiter::new()),
         AuthConfig {
             registration: config.registration,
             session_ttl: SESSION_TTL,
+            rate_limits: RateLimitConfig::default(),
         },
     );
     let state = AppState::new(
@@ -49,13 +54,18 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
             allowed_origins: config.allowed_origins,
             cookie_secure: config.cookie_secure,
             session_ttl: SESSION_TTL,
+            client_ip: config.client_ip,
         },
     );
 
     let listener = TcpListener::bind(config.bind_addr).await?;
     tracing::info!(addr = %listener.local_addr()?, "rustchat server listening");
-    axum::serve(listener, router(state))
-        .with_graceful_shutdown(shutdown::signal())
-        .await?;
+    // Connection info exposes the peer address used for rate limiting.
+    axum::serve(
+        listener,
+        router(state).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown::signal())
+    .await?;
     Ok(())
 }

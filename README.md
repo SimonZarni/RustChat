@@ -6,7 +6,7 @@ The project is intended to provide direct messaging, group conversations, commun
 
 ## Project status
 
-**Status:** Phase 1 (MVP core) has started. Implemented so far: account registration, login, logout and session management over a cookie-based API, backed by PostgreSQL. Not implemented: rate limiting, email, conversations, messaging, communities, WebSockets and any user interface beyond a placeholder web shell. See [API and realtime protocol](docs/API_AND_REALTIME.md) for the exact endpoints.
+**Status:** Phase 1 (MVP core) has started. Implemented so far: account registration, login, logout and session management over a cookie-based API, backed by PostgreSQL, with rate limiting on login and registration. Not implemented: email, conversations, messaging, communities, WebSockets and any user interface beyond a placeholder web shell. See [API and realtime protocol](docs/API_AND_REALTIME.md) for the exact endpoints.
 
 The technology stack describes the intended direction. It does not imply that every listed feature or integration has already been implemented. Update this section as working functionality becomes available.
 
@@ -122,6 +122,7 @@ cargo run -p rustchat-server             # serves on 127.0.0.1:8080
 | `RUSTCHAT_REGISTRATION` | no | `open` | `open` or `closed` |
 | `RUSTCHAT_COOKIE_SECURE` | no | `true` | Set `false` only for local HTTP development |
 | `RUSTCHAT_DB_MAX_CONNECTIONS` | no | `10` | Connection pool size |
+| `RUSTCHAT_TRUSTED_PROXY_HOPS` | no | `0` | Number of reverse proxies in front of the server. `0` uses the TCP peer address for rate limiting. Set `1` behind a single proxy such as Caddy, and only if clients cannot reach the server directly |
 
 ### Frontend
 

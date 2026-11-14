@@ -1,6 +1,7 @@
 //! HTTP adapter: translates HTTP requests into application operations.
 
 mod auth;
+mod client_ip;
 mod error;
 
 use std::sync::Arc;
@@ -16,6 +17,7 @@ use axum::{
 use rustchat_application::{auth::AuthService, error::AppError};
 use serde::Serialize;
 
+pub use client_ip::ClientIpSource;
 pub use error::ApiError;
 
 /// Request bodies on the API are small JSON documents.
@@ -29,6 +31,8 @@ pub struct HttpConfig {
     /// Mark the session cookie `Secure`. Must be true behind HTTPS.
     pub cookie_secure: bool,
     pub session_ttl: time::Duration,
+    /// How the client address used for rate limiting is determined.
+    pub client_ip: ClientIpSource,
 }
 
 impl HttpConfig {

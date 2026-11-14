@@ -97,3 +97,38 @@ pub trait TokenService: Send + Sync {
 pub trait Clock: Send + Sync {
     fn now(&self) -> OffsetDateTime;
 }
+
+/// At most `max` events per `window`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RateLimitRule {
+    pub max: u32,
+    pub window: time::Duration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RateLimitDecision {
+    Allowed,
+    Limited { retry_after: time::Duration },
+}
+
+/// Counts events per key within a window. Implementations must keep their
+/// memory bounded regardless of how many distinct keys are presented.
+///
+/// `check` does not consume budget; callers `record` events explicitly so a
+/// policy can decide which outcomes count (every attempt, or failures only).
+#[async_trait]
+pub trait RateLimiter: Send + Sync {
+    async fn check(
+        &self,
+        key: &str,
+        rule: RateLimitRule,
+        now: OffsetDateTime,
+    ) -> Result<RateLimitDecision, AppError>;
+    async fn record(
+        &self,
+        key: &str,
+        rule: RateLimitRule,
+        now: OffsetDateTime,
+    ) -> Result<(), AppError>;
+    async fn reset(&self, key: &str) -> Result<(), AppError>;
+}

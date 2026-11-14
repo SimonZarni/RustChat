@@ -3,6 +3,7 @@
 pub mod auth;
 pub mod error;
 pub mod ports;
+pub mod ratelimit;
 
 #[cfg(test)]
 mod testing;

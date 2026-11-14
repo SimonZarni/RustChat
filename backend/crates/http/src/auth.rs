@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::{ApiError, AppState};
+use crate::{ApiError, AppState, client_ip::ClientIp};
 
 /// JSON body extractor whose failures use the structured error format.
 #[derive(FromRequest)]
@@ -108,9 +108,13 @@ fn removal_cookie(state: &AppState) -> Cookie<'static> {
 
 pub async fn register(
     State(state): State<AppState>,
+    ClientIp(ip): ClientIp,
     ApiJson(body): ApiJson<Credentials>,
 ) -> Result<(StatusCode, Json<UserEnvelope>), ApiError> {
-    let user = state.auth.register(&body.username, body.password).await?;
+    let user = state
+        .auth
+        .register(ip, &body.username, body.password)
+        .await?;
     Ok((
         StatusCode::CREATED,
         Json(UserEnvelope {
@@ -121,10 +125,12 @@ pub async fn register(
 
 pub async fn login(
     State(state): State<AppState>,
+    ClientIp(ip): ClientIp,
     jar: CookieJar,
     ApiJson(body): ApiJson<Credentials>,
 ) -> Result<(CookieJar, Json<UserEnvelope>), ApiError> {
-    let LoginResult { user, token, .. } = state.auth.login(&body.username, body.password).await?;
+    let LoginResult { user, token, .. } =
+        state.auth.login(ip, &body.username, body.password).await?;
     let jar = jar.add(session_cookie(&state, token));
     Ok((
         jar,

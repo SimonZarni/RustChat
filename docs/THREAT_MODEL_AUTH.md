@@ -47,7 +47,7 @@ Updated after the accounts-and-sessions slice. "Tested" means an automated test 
 
 | Threat | Status |
 |---|---|
-| Credential stuffing / brute force | **Not mitigated.** Argon2id slows each guess, but there is no rate limiting or lockout yet. Required before exposing a server publicly |
+| Credential stuffing / brute force | Mitigated for a single instance and tested\*: per-network limit on all login attempts, per-username limit on failures (applies to unknown names too), per-network registration limit, all checked before hashing. Limits are per process and not shared across instances. Residual risk: a distributed attack (many networks) against one account is capped at 10 guesses per 15 minutes, and the same cap lets an attacker deliberately keep a victim's logins blocked for up to 15 minutes (accepted trade-off; the victim's existing sessions are unaffected) |
 | Account enumeration | Login: mitigated and tested (uniform response, dummy hash for unknown users)\*. Registration still reveals taken usernames; accepted for username-only accounts |
 | Password database leak | Implemented and tested: Argon2id (19 MiB, t=2, p=1), per-hash salt |
 | Session theft | Partly: random 256-bit token, only its SHA-256 stored, `HttpOnly`/`Secure`/`SameSite=Strict`/`__Host-` cookie, new token per login, 30-day absolute expiry. No idle timeout yet |
@@ -59,11 +59,12 @@ Updated after the accounts-and-sessions slice. "Tested" means an automated test 
 | Stale permissions on live connections | Not applicable yet |
 | Reset token abuse | Not applicable; password reset is not implemented |
 | Replay / duplicate requests | Registration duplicates are rejected by a database constraint. Message idempotency is future work |
-| Resource exhaustion | Partly: 16 KiB body limit, bounded DB pool, password length cap (128). No request rate limits yet |
+| Resource exhaustion | Partly: 16 KiB body limit, bounded DB pool, password length cap (128), limiter memory capped at 100,000 keys, limited requests skip hashing. Other endpoints and unauthenticated request volume are not rate limited yet; put a proxy-level limit in front for production |
+| Client IP spoofing to evade limits | Implemented and tested\*: `X-Forwarded-For` is ignored unless trusted proxy hops are configured, then only the entry the trusted proxy appended is used; missing connection info fails closed. Misconfiguration (hops set while the server is directly reachable) lets clients choose their own address, so it is documented as proxy-only |
 | Secret leakage | Partly: passwords and tokens have redacted `Debug`, internal errors are logged server-side and never returned, database URL is redacted. Verified once by inspecting the server log for the password; there is no automated log-content test yet |
 
 ## 7. Open questions
 
 - Desktop client authentication: the cookie model assumes the Tauri webview can hold the cookie; confirm when the desktop app is built.
-- Exact rate-limit values and storage (Valkey versus in-process). This is the next security task.
+- Rate-limit values are initial defaults and are not configurable yet. Replace the in-process limiter with a Valkey-backed one before running multiple instances, and decide fail-open versus fail-closed when Valkey is unavailable.
 - Email verification and password-reset policy (PRD open decisions); email is deferred.

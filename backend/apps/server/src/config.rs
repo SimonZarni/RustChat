@@ -1,8 +1,9 @@
 //! Runtime configuration, read from environment variables.
 
-use std::{fmt, net::SocketAddr};
+use std::{fmt, net::SocketAddr, num::NonZeroUsize};
 
 use rustchat_application::auth::RegistrationPolicy;
+use rustchat_http::ClientIpSource;
 
 const DEFAULT_BIND: &str = "127.0.0.1:8080";
 const DEFAULT_DB_MAX_CONNECTIONS: u32 = 10;
@@ -25,6 +26,8 @@ pub enum ConfigError {
     InvalidCookieSecure,
     #[error("RUSTCHAT_DB_MAX_CONNECTIONS must be a positive integer")]
     InvalidDbMaxConnections,
+    #[error("RUSTCHAT_TRUSTED_PROXY_HOPS must be a non-negative integer")]
+    InvalidTrustedProxyHops,
 }
 
 /// A database URL. It usually embeds a password, so `Debug` is redacted.
@@ -62,6 +65,7 @@ pub struct Config {
     pub registration: RegistrationPolicy,
     pub allowed_origins: Vec<String>,
     pub cookie_secure: bool,
+    pub client_ip: ClientIpSource,
 }
 
 fn is_valid_origin(origin: &str) -> bool {
@@ -120,6 +124,20 @@ impl Config {
             Some(_) => return Err(ConfigError::InvalidCookieSecure),
         };
 
+        // 0 (default): use the TCP peer address. N > 0: the server is only
+        // reachable through N trusted reverse proxies; use X-Forwarded-For.
+        let client_ip = match lookup("RUSTCHAT_TRUSTED_PROXY_HOPS") {
+            None => ClientIpSource::Peer,
+            Some(raw) => {
+                let hops: usize = raw
+                    .parse()
+                    .map_err(|_| ConfigError::InvalidTrustedProxyHops)?;
+                NonZeroUsize::new(hops).map_or(ClientIpSource::Peer, |trusted_hops| {
+                    ClientIpSource::ForwardedFor { trusted_hops }
+                })
+            }
+        };
+
         Ok(Self {
             bind_addr,
             database_url,
@@ -127,6 +145,7 @@ impl Config {
             registration,
             allowed_origins,
             cookie_secure,
+            client_ip,
         })
     }
 
@@ -166,6 +185,28 @@ mod tests {
         assert_eq!(config.registration, RegistrationPolicy::Open);
         assert!(config.cookie_secure);
         assert_eq!(config.db_max_connections, 10);
+        assert_eq!(config.client_ip, ClientIpSource::Peer);
+    }
+
+    #[test]
+    fn trusted_proxy_hops_select_the_client_ip_source() {
+        let source =
+            |value: &str| with(&[("RUSTCHAT_TRUSTED_PROXY_HOPS", value)]).map(|c| c.client_ip);
+        assert_eq!(source("0").unwrap(), ClientIpSource::Peer);
+        assert_eq!(
+            source("1").unwrap(),
+            ClientIpSource::ForwardedFor {
+                trusted_hops: NonZeroUsize::new(1).unwrap()
+            }
+        );
+        assert_eq!(
+            source("-1").unwrap_err(),
+            ConfigError::InvalidTrustedProxyHops
+        );
+        assert_eq!(
+            source("one").unwrap_err(),
+            ConfigError::InvalidTrustedProxyHops
+        );
     }
 
     #[test]

@@ -16,6 +16,8 @@ pub enum AppError {
     InvalidCredentials,
     #[error("not authenticated")]
     Unauthenticated,
+    #[error("too many attempts; retry after {retry_after_secs}s")]
+    RateLimited { retry_after_secs: u64 },
     #[error("not found")]
     NotFound,
     #[error("internal error: {0}")]

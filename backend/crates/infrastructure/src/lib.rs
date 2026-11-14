@@ -1,6 +1,7 @@
 //! RustChat infrastructure: implementations of application ports.
 
 pub mod postgres;
+pub mod ratelimit;
 pub mod security;
 
 /// Embedded versioned migrations (`backend/migrations`).

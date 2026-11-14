@@ -3,7 +3,7 @@
 use axum::{
     Json,
     extract::rejection::JsonRejection,
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use rustchat_application::error::AppError;
@@ -99,6 +99,17 @@ impl IntoResponse for ApiError {
                     "UNAUTHENTICATED",
                     "Authentication is required.",
                 ),
+                AppError::RateLimited { retry_after_secs } => {
+                    let mut response = body(
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "RATE_LIMITED",
+                        "Too many attempts. Please wait before trying again.",
+                    );
+                    response
+                        .headers_mut()
+                        .insert(header::RETRY_AFTER, HeaderValue::from(retry_after_secs));
+                    response
+                }
                 AppError::NotFound => {
                     body(StatusCode::NOT_FOUND, "NOT_FOUND", "Resource not found.")
                 }
