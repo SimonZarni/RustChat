@@ -1,0 +1,18 @@
+[package]
+name = "rustchat-application"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = "0.1.92"
+rustchat-domain = { version = "0.0.0", path = "../domain" }
+thiserror = "2.0.21"
+time = "0.3.55"
+
+[dev-dependencies]
+tokio = { version = "1.54.1", features = ["macros", "rt"] }

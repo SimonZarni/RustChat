@@ -112,6 +112,8 @@ backend/
 └── tests/
 ```
 
+**Current state:** the workspace has `crates/domain`, `crates/application`, `crates/infrastructure` and `crates/http` (the HTTP part of `interfaces`), plus `apps/server` for bootstrap. Domain modules are flat files inside `domain` until there is enough code to justify the per-area directories shown above. Only the identity area exists. `crates/websocket`, `protocol` and `shared` have not been created.
+
 ### Dependency rules
 
 1. Domain contains entities, value objects, invariants and domain rules. It must not depend on Axum, SQLx, Valkey or LiveKit.

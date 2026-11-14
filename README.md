@@ -6,7 +6,7 @@ The project is intended to provide direct messaging, group conversations, commun
 
 ## Project status
 
-**Status:** Phase 0 (foundation). The repository has a minimal Rust server (health endpoint only), a minimal React web shell, CI definitions and a local development compose file. No product features are implemented yet.
+**Status:** Phase 1 (MVP core) has started. Implemented so far: account registration, login, logout and session management over a cookie-based API, backed by PostgreSQL. Not implemented: rate limiting, email, conversations, messaging, communities, WebSockets and any user interface beyond a placeholder web shell. See [API and realtime protocol](docs/API_AND_REALTIME.md) for the exact endpoints.
 
 The technology stack describes the intended direction. It does not imply that every listed feature or integration has already been implemented. Update this section as working functionality becomes available.
 
@@ -80,6 +80,7 @@ rustchat/
 │   ├── SECURITY.md
 │   ├── THREAT_MODEL_AUTH.md
 │   ├── MIGRATIONS.md
+│   ├── DEPENDENCIES.md
 │   └── CONTRIBUTING.md
 ├── backend/
 ├── frontend/
@@ -97,13 +98,30 @@ rustchat/
 
 ### Backend
 
+The backend tests include integration tests against a real PostgreSQL, so start the [local services](#local-services) first and point `DATABASE_URL` at them. The database role needs permission to create databases (the dev compose role does).
+
 ```bash
 cd backend
+export DATABASE_URL=postgres://rustchat:<password from deployment/.env>@127.0.0.1:5432/rustchat
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo run -p rustchat-server        # listens on 127.0.0.1:8080; override with RUSTCHAT_BIND
+
+# Run the server (apply migrations first; the server never migrates on startup)
+export RUSTCHAT_ALLOWED_ORIGINS=http://localhost:5173
+export RUSTCHAT_COOKIE_SECURE=false      # plain-HTTP local development only
+cargo run -p rustchat-server -- migrate
+cargo run -p rustchat-server             # serves on 127.0.0.1:8080
 ```
+
+| Variable | Required | Default | Meaning |
+|---|---|---|---|
+| `DATABASE_URL` | yes | | PostgreSQL connection URL (contains a password; never logged) |
+| `RUSTCHAT_ALLOWED_ORIGINS` | yes | | Comma-separated exact origins allowed to make state-changing requests, e.g. `https://chat.example.com` |
+| `RUSTCHAT_BIND` | no | `127.0.0.1:8080` | Listen address |
+| `RUSTCHAT_REGISTRATION` | no | `open` | `open` or `closed` |
+| `RUSTCHAT_COOKIE_SECURE` | no | `true` | Set `false` only for local HTTP development |
+| `RUSTCHAT_DB_MAX_CONNECTIONS` | no | `10` | Connection pool size |
 
 ### Frontend
 
@@ -121,7 +139,7 @@ cp deployment/.env.example deployment/.env    # then change the password
 docker compose --env-file deployment/.env -f deployment/compose.dev.yml up -d --wait
 ```
 
-This starts PostgreSQL and Valkey bound to `127.0.0.1` only. The backend does not use them yet.
+This starts PostgreSQL and Valkey bound to `127.0.0.1` only. The backend uses PostgreSQL; it does not use Valkey yet.
 
 Do not copy commands into this guide until they have been tested against the repository.
 
@@ -135,6 +153,7 @@ Do not copy commands into this guide until they have been tested against the rep
 - [Security](docs/SECURITY.md)
 - [Authentication threat model](docs/THREAT_MODEL_AUTH.md)
 - [Migration strategy](docs/MIGRATIONS.md)
+- [Dependency and licence record](docs/DEPENDENCIES.md)
 - [Agent instructions](CLAUDE.md)
 - [Contributing](docs/CONTRIBUTING.md)
 

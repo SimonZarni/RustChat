@@ -2,13 +2,13 @@
 
 ## 1. Status
 
-No migrations exist yet. This document fixes the conventions so the first migration follows them. It complements [DATABASE.md](DATABASE.md) section 10.
+One migration exists: `0001_identity.sql` (users and sessions). This document fixes the conventions that migrations follow. It complements [DATABASE.md](DATABASE.md) section 10.
 
 ## 2. Tooling
 
 - SQLx migrations, stored in `backend/migrations/` as forward-only SQL files named `NNNN_description.sql`. Rollback is by restoring a backup or shipping a corrective forward migration; the exact policy is recorded per risky migration.
-- Migrations run explicitly (a dedicated command or startup step chosen at implementation time), never implicitly on every request path.
-- The application connects with a least-privilege role; a separate role with DDL rights runs migrations.
+- Migrations are embedded in the server binary and run explicitly with `rustchat-server migrate` (idempotent). The server does not migrate on startup, so a deploy decides when the schema changes.
+- Target model: the application connects with a least-privilege role and a separate role with DDL rights runs `migrate`. Today the local development setup uses one role for both.
 
 ## 3. Rules
 
@@ -21,11 +21,11 @@ No migrations exist yet. This document fixes the conventions so the first migrat
 
 ## 4. Testing
 
-- CI applies all migrations to an empty PostgreSQL database.
+- CI applies all migrations to an empty PostgreSQL database: every `sqlx::test` creates a fresh database and runs the full migration set.
 - CI (once at least one released schema exists) also upgrades a database created from the previous release.
 - Integration tests run against real PostgreSQL, not mocks.
 
 ## 5. Open items
 
-- Choose the migration execution model (separate command vs. startup step).
+- Create the separate migration and application database roles.
 - Decide the PostgreSQL version range to support (the dev compose file uses `postgres:18`).

@@ -1,0 +1,25 @@
+[package]
+name = "rustchat-infrastructure"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rustchat-domain = { version = "0.0.0", path = "../domain" }
+rustchat-application = { version = "0.0.0", path = "../application" }
+argon2 = "0.6.0"
+async-trait = "0.1.92"
+base64 = "0.23.1"
+getrandom = "0.4.3"
+sha2 = "0.11.1"
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "time", "migrate", "macros"] }
+time = "0.3.55"
+tokio = { version = "1.54.1", features = ["rt"] }
+uuid = "1.29.2"
+
+[dev-dependencies]
+tokio = { version = "1.54.1", features = ["macros", "rt"] }

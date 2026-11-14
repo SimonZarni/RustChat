@@ -36,6 +36,34 @@ POST   /api/v1/servers/{server_id}/channels
 
 These paths are examples, not a finalized endpoint inventory.
 
+### Implemented: accounts and sessions
+
+These endpoints exist (`backend/crates/http`). All other endpoints above remain illustrative. Registration and login are by username and password only; email, verification and password reset are not implemented.
+
+| Method and path | Auth | Success | Notes |
+|---|---|---|---|
+| `POST /api/v1/auth/register` | none | `201 {"user": {...}}` | Body `{"username","password"}`. Does not log the user in. `403 REGISTRATION_CLOSED` when `RUSTCHAT_REGISTRATION=closed` |
+| `POST /api/v1/auth/login` | none | `200 {"user": {...}}` | Sets the session cookie. A new session and token are issued on every login |
+| `POST /api/v1/auth/logout` | cookie | `204` | Revokes the current session and clears the cookie |
+| `GET /api/v1/auth/me` | cookie | `200 {"user": {...}}` | |
+| `GET /api/v1/auth/sessions` | cookie | `200 {"sessions": [{id, created_at, expires_at, current}]}` | Own live sessions only (max 100) |
+| `DELETE /api/v1/auth/sessions/{id}` | cookie | `204` | Own sessions only; another user's or unknown id is `404` |
+
+`user` is `{id, username, created_at}`. Times are RFC 3339 UTC. `GET /healthz` returns `{"status":"ok"}` outside the `/api/v1` prefix.
+
+**Constraints and rules**
+
+- Usernames: 3 to 32 characters, `[A-Za-z0-9_]`, case-insensitive. Passwords: 12 to 128 characters.
+- Bodies must be `application/json`, at most 16 KiB, with no unknown fields.
+- Session cookie: `__Host-rustchat_session` (`rustchat_session` when `RUSTCHAT_COOKIE_SECURE=false`, local development only). `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/`, `Max-Age` equal to the session lifetime. The value is a 256-bit random token; only its SHA-256 is stored server-side.
+- CSRF: every non-`GET`/`HEAD`/`OPTIONS` request under `/api/v1` must carry an `Origin` header exactly matching an entry in `RUSTCHAT_ALLOWED_ORIGINS`, otherwise `403 ORIGIN_NOT_ALLOWED`. This includes login and register.
+- Responses under `/api/v1` carry `Cache-Control: no-store`.
+- Failed login is the same `401 INVALID_CREDENTIALS` whether the account exists, the username is malformed or the password is wrong, and unknown accounts still pay the hashing cost. Registration necessarily reveals whether a username is taken (`409 USERNAME_TAKEN`).
+
+**Error codes in use:** `VALIDATION_ERROR` (422), `USERNAME_TAKEN` (409), `REGISTRATION_CLOSED` (403), `INVALID_CREDENTIALS` (401), `UNAUTHENTICATED` (401), `ORIGIN_NOT_ALLOWED` (403), `BAD_REQUEST` (400/415/422), `PAYLOAD_TOO_LARGE` (413), `NOT_FOUND` (404), `INTERNAL` (500).
+
+**Not yet implemented:** rate limiting and lockout on authentication endpoints, session idle timeout and rotation, WebSocket authentication, password change and reset, MFA.
+
 ## 3. Request and response conventions
 
 Use explicit request and response types. Avoid exposing database models directly as public API contracts.
