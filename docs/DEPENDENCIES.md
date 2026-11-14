@@ -2,7 +2,9 @@
 
 Required by [CLAUDE.md](../CLAUDE.md) section 7. Update this file whenever a dependency is added, removed or upgraded across a major version.
 
-**Status:** initial record. Licences were read from package metadata (`cargo metadata`, `pnpm licenses list`) on 2026-11-14. Metadata is the package author's declared licence expression; it is not a legal review, and no vulnerability scan (`cargo audit`, `cargo deny`, `pnpm audit`) has been run yet. Exact versions are pinned in `backend/Cargo.lock` and `frontend/pnpm-lock.yaml`.
+**Status:** initial record. Licences were read from package metadata (`cargo metadata`, `pnpm licenses list`) on 2026-11-14. Metadata is the package author's declared licence expression; it is not a legal review.
+
+**Automated checks.** CI runs `cargo deny check` (policy in `backend/deny.toml`: permissive licences only, crates.io as the only source, RustSec advisories, no wildcard versions), `cargo audit` and `pnpm audit --audit-level moderate` on every push and weekly. All three passed locally on 2026-11-14 (the CI job itself has not run yet when this was written). `cargo audit` scans every package in `Cargo.lock` and initially reported two advisories (RUSTSEC-2026-0459 for `libsqlite3-sys`, RUSTSEC-2023-0071 for `rsa`). Both crates belong to sqlx's optional SQLite and MySQL drivers, which appear in the lockfile but are not in the build graph for any target or feature set (verified with `cargo tree --all-features --target all -i`), so they do not affect RustChat. They are ignored in `backend/.cargo/audit.toml` with the reasons written down, and a CI step fails if any of those crates ever enters the real build graph. Remove the ignores when sqlx stops listing the drivers. Exact versions are pinned in `backend/Cargo.lock` and `frontend/pnpm-lock.yaml`.
 
 ## Backend (Rust)
 
@@ -46,6 +48,5 @@ Licences in this table are stated from general knowledge and have **not** been v
 
 ## Follow-up
 
-- Add `cargo deny` (licences and advisories) and `cargo audit` to CI; add a frontend audit step.
 - Re-check the Garage (AGPL-3.0) decision before Phase 2. The project licence is Apache-2.0 (ADR 0007); running Garage as a separate service does not change it.
 - Add TLS support to the SQLx connection before any database is reached over an untrusted network.

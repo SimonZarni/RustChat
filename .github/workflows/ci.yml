@@ -84,6 +84,18 @@ jobs:
       - name: cargo audit (RustSec advisories for Cargo.lock)
         working-directory: backend
         run: cargo audit
+      # backend/.cargo/audit.toml ignores advisories for sqlx's optional MySQL
+      # and SQLite drivers because they are only listed in Cargo.lock. Fail if
+      # any of them ever becomes part of the real build graph.
+      - name: ignored advisories must stay out of the build graph
+        working-directory: backend
+        run: |
+          for crate in rsa libsqlite3-sys sqlx-mysql sqlx-sqlite; do
+            if ! cargo tree --workspace --target all --all-features -i "$crate" 2>&1 | grep -q "nothing to print"; then
+              echo "::error::$crate is now in the build graph; remove its advisory ignore and fix it"
+              exit 1
+            fi
+          done
       - uses: pnpm/action-setup@v4
         with:
           package_json_file: frontend/package.json

@@ -20,7 +20,7 @@ tracing = "0.1.44"
 uuid = { version = "1.29.2", features = ["serde"] }
 
 [dev-dependencies]
-rustchat-infrastructure = { path = "../infrastructure" }
+rustchat-infrastructure = { version = "0.0.0", path = "../infrastructure" }
 http-body-util = "0.1.5"
 serde_json = "1.0.154"
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "postgres", "migrate", "macros"] }

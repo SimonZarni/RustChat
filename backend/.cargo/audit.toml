@@ -1,0 +1,15 @@
+# cargo-audit configuration. `cargo audit` scans every package listed in
+# Cargo.lock, including optional dependencies that are never compiled.
+#
+# sqlx's lockfile entries include its MySQL and SQLite drivers even though this
+# project only enables PostgreSQL. Neither crate below is in the build graph
+# for any target or feature set; CI enforces that (see the "ignored advisories"
+# step in .github/workflows/ci.yml). Remove these entries when sqlx stops
+# listing the drivers, or immediately if that CI step fails.
+[advisories]
+ignore = [
+    # libsqlite3-sys 0.30.1 (via sqlx-sqlite): bundled C SQLite CVE. Not compiled.
+    "RUSTSEC-2026-0459",
+    # rsa 0.9.10 (via sqlx-mysql): Marvin timing side channel. Not compiled.
+    "RUSTSEC-2023-0071",
+]
