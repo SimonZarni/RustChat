@@ -1,8 +1,11 @@
 {
   "name": "rustchat-frontend",
   "private": true,
+  "license": "Apache-2.0",
   "packageManager": "pnpm@10.18.0",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "pnpm --filter @rustchat/web dev",
     "build": "pnpm -r build",

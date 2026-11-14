@@ -7,7 +7,8 @@ Thank you for considering a contribution to RustChat. This guide describes the e
 - Read `README.md` and `CLAUDE.md`.
 - Read the relevant architecture, database, API/realtime and security documentation.
 - Check existing issues and pull requests before starting substantial work.
-- For a significant architectural change, discuss the proposal and record the decision before implementation.
+- For a significant architectural change, discuss the proposal and record the decision as an ADR in [docs/adr](adr/README.md) before or with the implementation.
+- Report suspected security vulnerabilities privately, following [.github/SECURITY.md](../.github/SECURITY.md), not in public issues.
 
 ## Development principles
 

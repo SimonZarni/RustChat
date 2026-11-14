@@ -47,5 +47,5 @@ Licences in this table are stated from general knowledge and have **not** been v
 ## Follow-up
 
 - Add `cargo deny` (licences and advisories) and `cargo audit` to CI; add a frontend audit step.
-- Decide the project's own licence (README: not yet selected) and check compatibility.
+- Re-check the Garage (AGPL-3.0) decision before Phase 2. The project licence is Apache-2.0 (ADR 0007); running Garage as a separate service does not change it.
 - Add TLS support to the SQLx connection before any database is reached over an untrusted network.

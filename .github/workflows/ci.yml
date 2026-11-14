@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # New advisories are published without any commit, so re-check weekly.
+  schedule:
+    - cron: "17 5 * * 1"
 
 permissions:
   contents: read
@@ -65,3 +68,28 @@ jobs:
       - run: pnpm lint
       - run: pnpm test
       - run: pnpm build
+
+  # Licence policy, known vulnerabilities and sources for all dependencies.
+  # Kept separate so a newly published advisory does not block unrelated work.
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-audit
+      - name: cargo deny (licences, advisories, sources)
+        working-directory: backend
+        run: cargo deny check
+      - name: cargo audit (RustSec advisories for Cargo.lock)
+        working-directory: backend
+        run: cargo audit
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: pnpm audit (moderate and above)
+        working-directory: frontend
+        run: pnpm audit --audit-level moderate

@@ -1,0 +1,40 @@
+# cargo-deny policy: licences, advisories, duplicate versions and sources.
+# Run from this directory: `cargo deny check`.
+# Reasons for the licence policy: docs/DEPENDENCIES.md and docs/adr/0007.
+
+[graph]
+all-features = false
+
+[advisories]
+# Known vulnerabilities and unmaintained/unsound crates fail the check.
+# Add an entry to `ignore` only with a comment saying why it is safe and when
+# to revisit; e.g. { id = "RUSTSEC-0000-0000", reason = "..." }.
+ignore = []
+
+[licenses]
+# Only permissive licences. Dependencies offered under an SPDX "OR" expression
+# pass if any one alternative is allowed here.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unlicense",
+    "BSL-1.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+# Duplicate versions of a crate are reported but do not fail the build.
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

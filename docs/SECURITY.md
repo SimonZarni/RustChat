@@ -128,7 +128,7 @@ At minimum, consider:
 
 ## 13. Vulnerability reporting
 
-Before public release, provide a security contact and a clear private vulnerability-reporting process. Do not ask reporters to publish exploitable vulnerabilities before maintainers have had a reasonable opportunity to investigate and coordinate a fix.
+Private vulnerability reporting is enabled through GitHub; the process and expectations are in [.github/SECURITY.md](../.github/SECURITY.md). Do not ask reporters to publish exploitable vulnerabilities before maintainers have had a reasonable opportunity to investigate and coordinate a fix. Before a stable release, add a monitored contact that does not depend on one GitHub account and define response targets.
 
 ## 14. Related documents
 

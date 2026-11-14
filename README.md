@@ -70,6 +70,7 @@ The exact layout may evolve as implementation begins. Prefer adding modules when
 ```text
 rustchat/
 ├── README.md
+├── LICENSE
 ├── CLAUDE.md
 ├── docs/
 │   ├── RustChat-PRD.md
@@ -81,7 +82,8 @@ rustchat/
 │   ├── THREAT_MODEL_AUTH.md
 │   ├── MIGRATIONS.md
 │   ├── DEPENDENCIES.md
-│   └── CONTRIBUTING.md
+│   ├── CONTRIBUTING.md
+│   └── adr/
 ├── backend/
 ├── frontend/
 ├── deployment/
@@ -155,9 +157,11 @@ Do not copy commands into this guide until they have been tested against the rep
 - [Authentication threat model](docs/THREAT_MODEL_AUTH.md)
 - [Migration strategy](docs/MIGRATIONS.md)
 - [Dependency and licence record](docs/DEPENDENCIES.md)
+- [Architecture decision records](docs/adr/README.md)
+- [Security policy and vulnerability reporting](.github/SECURITY.md)
 - [Agent instructions](CLAUDE.md)
 - [Contributing](docs/CONTRIBUTING.md)
 
 ## Licence
 
-The project licence has not yet been selected. Add a root `LICENSE` file before distributing the project. Review the licences of all direct and transitive dependencies separately.
+RustChat is licensed under the [Apache License 2.0](LICENSE) (see [ADR 0007](docs/adr/0007-apache-2-licence.md)). Contributions are accepted under the same licence. Dependencies keep their own licences; see the [dependency and licence record](docs/DEPENDENCIES.md).
