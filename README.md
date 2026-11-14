@@ -144,6 +144,25 @@ docker compose --env-file deployment/.env -f deployment/compose.dev.yml up -d --
 
 This starts PostgreSQL and Valkey bound to `127.0.0.1` only. The backend uses PostgreSQL; it does not use Valkey yet.
 
+#### Alternative: native PostgreSQL on Windows (no Docker)
+
+Docker is only one way to get a PostgreSQL 18. The backend needs nothing from Docker itself, so a native install works equally well (verified on Windows 11 with the full backend test suite):
+
+```powershell
+# Elevated PowerShell. Choose your own superuser password; keep it out of the repository.
+winget install --id PostgreSQL.PostgreSQL.18 --exact --silent --override "--mode unattended --unattendedmodeui none --superpassword <superuser-password> --serverport 5432 --disable-components pgAdmin,stackbuilder"
+```
+
+Then, as the `postgres` superuser, restrict it to loopback and create the application role and database (the role needs `CREATEDB` so each test can create its own database, but not superuser):
+
+```sql
+ALTER SYSTEM SET listen_addresses = 'localhost';   -- then restart the postgresql-x64-18 service
+CREATE ROLE rustchat LOGIN CREATEDB PASSWORD '<password>';
+CREATE DATABASE rustchat OWNER rustchat;
+```
+
+Use that role's password in `DATABASE_URL` as shown in the Backend section. Only one PostgreSQL can listen on port 5432: stop the Docker one (`docker compose ... stop postgres`) or pick another port in the URL. The service starts automatically with Windows.
+
 Do not copy commands into this guide until they have been tested against the repository.
 
 ## Documentation
