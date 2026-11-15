@@ -2,13 +2,13 @@
 
 ## 1. Status
 
-One migration exists: `0001_identity.sql` (users and sessions). This document fixes the conventions that migrations follow. It complements [DATABASE.md](DATABASE.md) section 10.
+Twenty migrations currently exist: `0001_identity.sql` (users and sessions), `0002_conversations.sql` (conversations and members), `0003_messages.sql` (messages, sequences and outbox events), `0004_communities.sql` (communities, channels, roles, overrides and invites), `0005_message_edits.sql` (message edit/delete timestamps), `0006_outbox_event_revisions.sql` (allowing repeated message updates at one sequence), `0007_community_audit.sql` (administrative audit events), `0008_user_profiles.sql` (display names and bios), `0009_read_cursors.sql` (member-scoped durable read positions), `0010_message_reactions.sql` (member-scoped emoji reactions), `0011_delivery_cursors.sql` (member-scoped delivery acknowledgements), `0012_message_replies.sql` (conversation-scoped reply references), `0013_message_mentions.sql` (member-scoped message mentions), `0014_channel_categories.sql` (community channel categories and channel assignment), `0015_profile_privacy.sql` (profile discoverability and visibility controls), `0016_account_lifecycle.sql` (deactivation state and retained deletion tombstones), `0017_presence_privacy.sql` (user-configurable online-status visibility), `0018_account_recovery.sql` (optional recovery email and single-use account recovery token storage; email verification remains deferred), `0019_shared_rate_limits.sql` (hashed, expiring authentication rate-limit keys shared through PostgreSQL), and `0020_instance_administration.sql` (account suspension state and instance-admin audit events). This document fixes the conventions that migrations follow. It complements [DATABASE.md](DATABASE.md) section 10.
 
 ## 2. Tooling
 
 - SQLx migrations, stored in `backend/migrations/` as forward-only SQL files named `NNNN_description.sql`. Rollback is by restoring a backup or shipping a corrective forward migration; the exact policy is recorded per risky migration.
 - Migrations are embedded in the server binary and run explicitly with `rustchat-server migrate` (idempotent). The server does not migrate on startup, so a deploy decides when the schema changes.
-- Target model: the application connects with a least-privilege role and a separate role with DDL rights runs `migrate`. Today the local development setup uses one role for both.
+- The deployment Compose setup uses a least-privilege runtime role and a separate migration role with DDL rights. Local development uses one role for both to keep setup simple.
 
 ## 3. Rules
 
@@ -27,5 +27,4 @@ One migration exists: `0001_identity.sql` (users and sessions). This document fi
 
 ## 5. Open items
 
-- Create the separate migration and application database roles.
 - Decide the PostgreSQL version range to support (the dev compose file uses `postgres:18`).

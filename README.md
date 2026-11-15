@@ -6,7 +6,9 @@ The project is intended to provide direct messaging, group conversations, commun
 
 ## Project status
 
-**Status:** Phase 1 (MVP core) has started. Implemented so far: account registration, login, logout and session management over a cookie-based API, backed by PostgreSQL, with rate limiting on login and registration. Not implemented: email, conversations, messaging, communities, WebSockets and any user interface beyond a placeholder web shell. See [API and realtime protocol](docs/API_AND_REALTIME.md) for the exact endpoints.
+**Status:** Phase 0 exit criteria are met: documented local setup, workspace build/test/run path, CI quality gates, migration strategy, and an initial threat model. Phase 1 has working account/session APIs, password change with other-session revocation, web workflows for account deactivation and retained-history deletion, and editable display-name/bio profiles; direct/group conversations; community/channel/role permission APIs with client controls for settings, channels, roles, member removal, invitation listing and revocation, ownership and deletion; durable editable/deletable messages with paginated history, idempotent sends, replies, member mentions, emoji reactions, basic Markdown, and per-conversation local drafts; a transactional outbox; single-instance WebSocket message delivery, privacy-scoped presence, typing and reaction events, community-scoped member/channel invalidations, durable read and delivery cursors, and reconnect recovery; an initial web client with sent/delivered/read markers, light/dark themes, keyboard shortcuts, modal focus handling and reduced-motion support; and a Docker Compose deployment with backup/restore scripts and a release-tagged upgrade/rollback runbook. Phase 1 is **not yet complete** against the MVP definition of done: email verification is deferred; broader frontend workflow and screen-reader review remain. Instance administrators can list and suspend accounts through the admin API and web controls; real slow-reader socket behavior and broader keyboard navigation are covered by integration and browser tests. Password reset is implemented with optional SMTP delivery, single-use hashed tokens and session revocation. The Docker Compose baseline and backup/restore flow passed a fresh-volume local rehearsal that verified restored sign-in and message history. See [API and realtime protocol](docs/API_AND_REALTIME.md) for exact implemented routes and limitations.
+
+See the [Phase Completion Audit](docs/PHASE_STATUS.md) for the reviewed Phase 0/1 feature inventory, outstanding P0 requirements and checks run.
 
 The technology stack describes the intended direction. It does not imply that every listed feature or integration has already been implemented. Update this section as working functionality becomes available.
 
@@ -125,6 +127,8 @@ cargo run -p rustchat-server             # serves on 127.0.0.1:8080
 | `RUSTCHAT_COOKIE_SECURE` | no | `true` | Set `false` only for local HTTP development |
 | `RUSTCHAT_DB_MAX_CONNECTIONS` | no | `10` | Connection pool size |
 | `RUSTCHAT_TRUSTED_PROXY_HOPS` | no | `0` | Number of reverse proxies in front of the server. `0` uses the TCP peer address for rate limiting. Set `1` behind a single proxy such as Caddy, and only if clients cannot reach the server directly |
+| `RUSTCHAT_GROUP_MEMBER_LIMIT` | no | `100` | Maximum members in a group conversation, including its creator (allowed range: 2–500) |
+| `RUSTCHAT_ADMIN_USER_IDS` | no | empty | Comma-separated UUIDs of instance administrators; community roles do not grant this authority |
 
 ### Frontend
 
@@ -134,6 +138,10 @@ pnpm install
 pnpm typecheck && pnpm lint && pnpm test && pnpm build
 pnpm dev
 ```
+
+Run the Chromium keyboard and accessibility checks with `pnpm --filter @rustchat/web exec playwright install chromium` followed by `pnpm --filter @rustchat/web test:e2e`.
+
+The Vite development server proxies `/api` and WebSocket requests to `http://127.0.0.1:8080`. Configure the backend with `RUSTCHAT_ALLOWED_ORIGINS=http://localhost:5173` and `RUSTCHAT_COOKIE_SECURE=false` for local HTTP development.
 
 ### Local services
 

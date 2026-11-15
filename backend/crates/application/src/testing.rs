@@ -1,12 +1,14 @@
 //! In-memory fakes for application unit tests.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
 };
 
 use async_trait::async_trait;
-use rustchat_domain::identity::{PlainPassword, Session, SessionId, User, UserId, Username};
+use rustchat_domain::identity::{
+    PlainPassword, ProfilePrivacy, ProfileVisibility, Session, SessionId, User, UserId, Username,
+};
 use time::{Duration, OffsetDateTime};
 
 use crate::{
@@ -20,6 +22,10 @@ use crate::{
 struct Store {
     users: Vec<(User, String)>,
     sessions: Vec<(Session, TokenDigest, bool)>,
+    privacy: HashMap<UserId, ProfilePrivacy>,
+    deactivated: HashSet<UserId>,
+    suspended: HashMap<UserId, OffsetDateTime>,
+    deleted: HashSet<UserId>,
 }
 
 #[derive(Clone, Default)]
@@ -49,22 +55,285 @@ impl UserRepository for FakeStore {
         Ok(store
             .users
             .iter()
-            .find(|(u, _)| &u.username == username)
+            .find(|(u, _)| &u.username == username && !store.deleted.contains(&u.id))
             .map(|(u, hash)| UserCredentials {
                 user: u.clone(),
                 password_hash: hash.clone(),
             }))
+    }
+
+    async fn find_discoverable(
+        &self,
+        _caller: UserId,
+        username: &Username,
+    ) -> Result<Option<User>, AppError> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .users
+            .iter()
+            .find(|(u, _)| &u.username == username)
+            .map(|(u, _)| u.clone()))
+    }
+
+    async fn find_profile_for_caller(
+        &self,
+        caller: UserId,
+        username: &Username,
+    ) -> Result<Option<rustchat_domain::identity::UserProfile>, AppError> {
+        let store = self.0.lock().unwrap();
+        let Some((user, _)) = store.users.iter().find(|(u, _)| &u.username == username) else {
+            return Ok(None);
+        };
+        let privacy = store.privacy.get(&user.id).copied().unwrap_or_default();
+        if caller != user.id
+            && !(privacy.discoverable && privacy.visibility == ProfileVisibility::Everyone)
+        {
+            return Ok(None);
+        }
+        Ok(Some(rustchat_domain::identity::UserProfile {
+            user_id: user.id,
+            username: user.username.clone(),
+            display_name: user.username.to_string(),
+            bio: String::new(),
+            updated_at: user.created_at,
+        }))
+    }
+
+    async fn update_username(
+        &self,
+        user_id: UserId,
+        username: &Username,
+    ) -> Result<User, AppError> {
+        let mut store = self.0.lock().unwrap();
+        if store
+            .users
+            .iter()
+            .any(|(user, _)| user.username == *username && user.id != user_id)
+        {
+            return Err(AppError::UsernameTaken);
+        }
+        let (user, _) = store
+            .users
+            .iter_mut()
+            .find(|(user, _)| user.id == user_id)
+            .ok_or(AppError::NotFound)?;
+        user.username = username.clone();
+        Ok(user.clone())
+    }
+
+    async fn get_profile(
+        &self,
+        user_id: UserId,
+    ) -> Result<rustchat_domain::identity::UserProfile, AppError> {
+        let store = self.0.lock().unwrap();
+        let (user, _) = store
+            .users
+            .iter()
+            .find(|(user, _)| user.id == user_id)
+            .ok_or(AppError::NotFound)?;
+        Ok(rustchat_domain::identity::UserProfile {
+            user_id,
+            username: user.username.clone(),
+            display_name: user.username.to_string(),
+            bio: String::new(),
+            updated_at: user.created_at,
+        })
+    }
+
+    async fn update_profile(
+        &self,
+        user_id: UserId,
+        display_name: &str,
+        bio: &str,
+        now: OffsetDateTime,
+    ) -> Result<rustchat_domain::identity::UserProfile, AppError> {
+        let store = self.0.lock().unwrap();
+        let (user, _) = store
+            .users
+            .iter()
+            .find(|(user, _)| user.id == user_id)
+            .ok_or(AppError::NotFound)?;
+        Ok(rustchat_domain::identity::UserProfile {
+            user_id,
+            username: user.username.clone(),
+            display_name: display_name.to_owned(),
+            bio: bio.to_owned(),
+            updated_at: now,
+        })
+    }
+
+    async fn get_privacy(&self, user_id: UserId) -> Result<ProfilePrivacy, AppError> {
+        if !self
+            .0
+            .lock()
+            .unwrap()
+            .users
+            .iter()
+            .any(|(user, _)| user.id == user_id)
+        {
+            return Err(AppError::NotFound);
+        }
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .privacy
+            .get(&user_id)
+            .copied()
+            .unwrap_or_default())
+    }
+
+    async fn update_privacy(
+        &self,
+        user_id: UserId,
+        privacy: ProfilePrivacy,
+    ) -> Result<ProfilePrivacy, AppError> {
+        let mut store = self.0.lock().unwrap();
+        if !store.users.iter().any(|(user, _)| user.id == user_id) {
+            return Err(AppError::NotFound);
+        }
+        store.privacy.insert(user_id, privacy);
+        Ok(privacy)
+    }
+
+    async fn deactivate_account(
+        &self,
+        user_id: UserId,
+        _now: OffsetDateTime,
+    ) -> Result<(), AppError> {
+        let mut store = self.0.lock().unwrap();
+        if !store.users.iter().any(|(user, _)| user.id == user_id) {
+            return Err(AppError::NotFound);
+        }
+        store.deactivated.insert(user_id);
+        for (session, _, revoked) in &mut store.sessions {
+            if session.user_id == user_id {
+                *revoked = true;
+            }
+        }
+        Ok(())
+    }
+
+    async fn delete_account(
+        &self,
+        user_id: UserId,
+        tombstone_username: &Username,
+        hash: &str,
+        _now: OffsetDateTime,
+    ) -> Result<(), AppError> {
+        let mut store = self.0.lock().unwrap();
+        let (user, password_hash) = store
+            .users
+            .iter_mut()
+            .find(|(user, _)| user.id == user_id)
+            .ok_or(AppError::NotFound)?;
+        user.username = tombstone_username.clone();
+        *password_hash = hash.to_owned();
+        store.deleted.insert(user_id);
+        store.deactivated.insert(user_id);
+        for (session, _, revoked) in &mut store.sessions {
+            if session.user_id == user_id {
+                *revoked = true;
+            }
+        }
+        Ok(())
+    }
+
+    async fn issue_password_reset_token(
+        &self,
+        _email: &rustchat_domain::identity::EmailAddress,
+        _digest: TokenDigest,
+        _now: OffsetDateTime,
+        _expires_at: OffsetDateTime,
+    ) -> Result<bool, AppError> {
+        Ok(false)
+    }
+
+    async fn reset_password_with_token(
+        &self,
+        _digest: TokenDigest,
+        _password_hash: String,
+        _now: OffsetDateTime,
+    ) -> Result<bool, AppError> {
+        Ok(false)
+    }
+
+    async fn list_admin_users(&self, limit: i64) -> Result<Vec<AdminUser>, AppError> {
+        let store = self.0.lock().unwrap();
+        Ok(store
+            .users
+            .iter()
+            .take(limit as usize)
+            .map(|(user, _)| AdminUser {
+                user: user.clone(),
+                is_instance_admin: false,
+                deactivated_at: store
+                    .deactivated
+                    .contains(&user.id)
+                    .then_some(OffsetDateTime::UNIX_EPOCH),
+                suspended_at: store.suspended.get(&user.id).copied(),
+                deleted_at: store
+                    .deleted
+                    .contains(&user.id)
+                    .then_some(OffsetDateTime::UNIX_EPOCH),
+            })
+            .collect())
+    }
+
+    async fn set_user_suspended(
+        &self,
+        _actor: UserId,
+        target: UserId,
+        suspended: bool,
+        now: OffsetDateTime,
+    ) -> Result<AdminUser, AppError> {
+        let mut store = self.0.lock().unwrap();
+        let user = store
+            .users
+            .iter()
+            .find(|(user, _)| user.id == target)
+            .map(|(user, _)| user.clone())
+            .ok_or(AppError::NotFound)?;
+        if store.deleted.contains(&target) {
+            return Err(AppError::NotFound);
+        }
+        if suspended {
+            store.suspended.insert(target, now);
+        } else {
+            store.suspended.remove(&target);
+        }
+        for (session, _, revoked) in &mut store.sessions {
+            if session.user_id == target && suspended {
+                *revoked = true;
+            }
+        }
+        Ok(AdminUser {
+            user,
+            is_instance_admin: false,
+            deactivated_at: store
+                .deactivated
+                .contains(&target)
+                .then_some(OffsetDateTime::UNIX_EPOCH),
+            suspended_at: store.suspended.get(&target).copied(),
+            deleted_at: store
+                .deleted
+                .contains(&target)
+                .then_some(OffsetDateTime::UNIX_EPOCH),
+        })
     }
 }
 
 #[async_trait]
 impl SessionRepository for FakeStore {
     async fn insert(&self, new: NewSession) -> Result<(), AppError> {
-        self.0
-            .lock()
-            .unwrap()
-            .sessions
-            .push((new.session, new.token_digest, false));
+        let mut store = self.0.lock().unwrap();
+        if store.deleted.contains(&new.session.user_id) {
+            return Err(AppError::Unauthenticated);
+        }
+        store.deactivated.remove(&new.session.user_id);
+        store.sessions.push((new.session, new.token_digest, false));
         Ok(())
     }
 
@@ -74,10 +343,14 @@ impl SessionRepository for FakeStore {
         now: OffsetDateTime,
     ) -> Result<Option<ActiveSession>, AppError> {
         let store = self.0.lock().unwrap();
-        let found = store
-            .sessions
-            .iter()
-            .find(|(s, d, revoked)| d == digest && !revoked && !s.is_expired_at(now));
+        let found = store.sessions.iter().find(|(s, d, revoked)| {
+            d == digest
+                && !revoked
+                && !s.is_expired_at(now)
+                && !store.deactivated.contains(&s.user_id)
+                && !store.suspended.contains_key(&s.user_id)
+                && !store.deleted.contains(&s.user_id)
+        });
         Ok(found.and_then(|(s, _, _)| {
             store
                 .users
@@ -122,6 +395,28 @@ impl SessionRepository for FakeStore {
             }
             None => Ok(false),
         }
+    }
+
+    async fn update_password_and_revoke_other_sessions(
+        &self,
+        user_id: UserId,
+        current_session_id: SessionId,
+        password_hash: String,
+        _now: OffsetDateTime,
+    ) -> Result<(), AppError> {
+        let mut store = self.0.lock().unwrap();
+        let (_, hash) = store
+            .users
+            .iter_mut()
+            .find(|(user, _)| user.id == user_id)
+            .ok_or(AppError::NotFound)?;
+        *hash = password_hash;
+        for (session, _, revoked) in &mut store.sessions {
+            if session.user_id == user_id && session.id != current_session_id {
+                *revoked = true;
+            }
+        }
+        Ok(())
     }
 }
 

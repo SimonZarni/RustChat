@@ -12,17 +12,22 @@ workspace = true
 [dependencies]
 rustchat-domain = { version = "0.0.0", path = "../domain" }
 rustchat-application = { version = "0.0.0", path = "../application" }
-axum = { version = "0.8.9", features = ["macros"] }
+axum = { version = "0.8.9", features = ["macros", "ws"] }
 axum-extra = { version = "0.12.6", features = ["cookie"] }
+futures-util = "0.3.31"
+serde_json = "1.0.154"
 serde = { version = "1.0.229", features = ["derive"] }
 time = { version = "0.3.55", features = ["serde-well-known"] }
 tracing = "0.1.44"
 uuid = { version = "1.29.2", features = ["serde"] }
+tokio = { version = "1.54.1", features = ["sync", "time"] }
 
 [dev-dependencies]
+async-trait = "0.1.92"
 rustchat-infrastructure = { version = "0.0.0", path = "../infrastructure" }
 http-body-util = "0.1.5"
 serde_json = "1.0.154"
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "postgres", "migrate", "macros"] }
-tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.54.1", features = ["macros", "net", "rt-multi-thread"] }
+tokio-tungstenite = "0.29.0"
 tower = "0.5.3"

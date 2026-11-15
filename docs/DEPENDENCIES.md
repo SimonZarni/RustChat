@@ -15,6 +15,7 @@ Direct dependencies:
 | Crate | Licence | Used for |
 |---|---|---|
 | `axum`, `axum-extra` | MIT | HTTP framework, cookie handling |
+| `futures-util` | MIT OR Apache-2.0 | Split and drive WebSocket streams |
 | `tokio` | MIT | Async runtime |
 | `tower`, `http-body-util` (dev) | MIT | Request testing utilities |
 | `sqlx` | MIT OR Apache-2.0 | PostgreSQL access and migrations (default features off; no TLS yet) |
@@ -24,7 +25,7 @@ Direct dependencies:
 | `base64` | MIT OR Apache-2.0 | Token encoding |
 | `uuid` | Apache-2.0 OR MIT | UUIDv7 identifiers |
 | `time` | MIT OR Apache-2.0 | Timestamps |
-| `serde`, `serde_json` (dev) | MIT OR Apache-2.0 | (De)serialization |
+| `serde`, `serde_json` | MIT OR Apache-2.0 | HTTP serialization and JSON outbox payloads |
 | `thiserror` | MIT OR Apache-2.0 | Error types |
 | `async-trait` | MIT OR Apache-2.0 | Async methods on port traits used as trait objects |
 | `tracing`, `tracing-subscriber` | MIT | Structured logging |

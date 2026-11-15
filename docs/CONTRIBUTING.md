@@ -62,17 +62,18 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-These commands are examples for the planned Rust workspace. Adjust them if the workspace structure or scripts differ.
+These are the backend quality checks used by CI. Run them from `backend/` (or with `--manifest-path backend/Cargo.toml` from the repository root). PostgreSQL integration tests require a reachable `DATABASE_URL`; see the local development instructions in [README.md](../README.md).
 
 ### Frontend
-Run the scripts defined by the frontend workspace. The intended checks include:
+Run the frontend checks from `frontend/`:
 
 - TypeScript type checking
-- ESLint
+- Oxlint
 - Vitest unit and component tests
-- Integration tests using MSW where appropriate
-- Playwright end-to-end tests for important workflows
+- Playwright Chromium end-to-end keyboard and accessibility tests
 - Production build
+
+These correspond to `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm --filter @rustchat/web test:e2e` and `pnpm build` from `frontend/`. Install the browser once with `pnpm --filter @rustchat/web exec playwright install chromium`. The automated accessibility scan covers the core workspace and conversation dialog in light mode and the workspace in dark mode; browser keyboard coverage also exercises workspace navigation, community join, settings, administration controls, and modal focus restoration. Manually review screen-reader behavior.
 
 Do not report a check as passing unless it was actually executed successfully.
 

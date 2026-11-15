@@ -34,6 +34,50 @@ macro_rules! id_type {
 
 id_type!(UserId);
 id_type!(SessionId);
+id_type!(ConversationId);
+id_type!(MessageId);
+id_type!(CommunityId);
+id_type!(ChannelId);
+id_type!(CategoryId);
+id_type!(RoleId);
+id_type!(InviteId);
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum EmailAddressError {
+    #[error("email address is not valid")]
+    Invalid,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct EmailAddress(String);
+
+impl EmailAddress {
+    pub fn parse(raw: &str) -> Result<Self, EmailAddressError> {
+        let value = raw.trim().to_lowercase();
+        if value.len() > 254 || value.is_empty() || value.chars().any(char::is_whitespace) {
+            return Err(EmailAddressError::Invalid);
+        }
+        let Some((local, domain)) = value.split_once('@') else {
+            return Err(EmailAddressError::Invalid);
+        };
+        if local.is_empty()
+            || local.len() > 64
+            || domain.is_empty()
+            || domain.starts_with('.')
+            || domain.ends_with('.')
+            || !domain.contains('.')
+            || value.matches('@').count() != 1
+            || value.contains(['<', '>', ',', ';', ':', '"', '\\'])
+        {
+            return Err(EmailAddressError::Invalid);
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 
 pub const USERNAME_MIN_LEN: usize = 3;
 pub const USERNAME_MAX_LEN: usize = 32;
@@ -140,6 +184,38 @@ pub struct User {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserProfile {
+    pub user_id: UserId,
+    pub username: Username,
+    pub display_name: String,
+    pub bio: String,
+    pub updated_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProfileVisibility {
+    Everyone,
+    ConversationMembers,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProfilePrivacy {
+    pub discoverable: bool,
+    pub visibility: ProfileVisibility,
+    pub presence_visible: bool,
+}
+
+impl Default for ProfilePrivacy {
+    fn default() -> Self {
+        Self {
+            discoverable: true,
+            visibility: ProfileVisibility::Everyone,
+            presence_visible: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Session {
     pub id: SessionId,
     pub user_id: UserId,
@@ -214,6 +290,23 @@ mod tests {
     fn password_debug_is_redacted() {
         let password = PlainPassword::parse_new("correct horse battery".into()).unwrap();
         assert!(!format!("{password:?}").contains("correct"));
+    }
+
+    #[test]
+    fn email_address_is_normalized_and_rejects_malformed_values() {
+        assert_eq!(
+            EmailAddress::parse(" Alice@Example.COM ").unwrap().as_str(),
+            "alice@example.com"
+        );
+        for invalid in [
+            "",
+            "alice",
+            "@example.com",
+            "alice@localhost",
+            "a b@example.com",
+        ] {
+            assert!(EmailAddress::parse(invalid).is_err());
+        }
     }
 
     #[test]

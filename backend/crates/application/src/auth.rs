@@ -1,15 +1,19 @@
 //! Account registration, login and session management use cases.
 
-use std::{net::IpAddr, sync::Arc};
+use std::{collections::HashSet, net::IpAddr, sync::Arc};
 
-use rustchat_domain::identity::{PlainPassword, Session, SessionId, User, UserId, Username};
+use rustchat_domain::identity::{
+    EmailAddress, PlainPassword, ProfilePrivacy, Session, SessionId, User, UserId, UserProfile,
+    Username,
+};
 use time::{Duration, OffsetDateTime};
 
 use crate::{
     error::AppError,
     ports::{
-        Clock, CreateUserOutcome, NewSession, NewUser, PasswordHasher, RateLimitDecision,
-        RateLimitRule, RateLimiter, SessionRepository, TokenService, UserRepository,
+        Clock, CreateUserOutcome, EmailDelivery, NewSession, NewUser, PasswordHasher,
+        RateLimitDecision, RateLimitRule, RateLimiter, SessionRepository, TokenService,
+        UserRepository,
     },
     ratelimit::{RateLimitConfig, login_ip_key, login_user_key, register_ip_key},
 };
@@ -63,6 +67,9 @@ pub struct AuthService {
     tokens: Arc<dyn TokenService>,
     clock: Arc<dyn Clock>,
     limiter: Arc<dyn RateLimiter>,
+    instance_admin_ids: HashSet<UserId>,
+    email_delivery: Option<Arc<dyn EmailDelivery>>,
+    public_url: Option<String>,
     config: AuthConfig,
 }
 
@@ -83,7 +90,143 @@ impl AuthService {
             tokens,
             clock,
             limiter,
+            instance_admin_ids: HashSet::new(),
+            email_delivery: None,
+            public_url: None,
             config,
+        }
+    }
+
+    pub fn with_instance_admins(mut self, admin_ids: impl IntoIterator<Item = UserId>) -> Self {
+        self.instance_admin_ids = admin_ids.into_iter().collect();
+        self
+    }
+
+    fn require_instance_admin(&self, actor: UserId) -> Result<(), AppError> {
+        self.instance_admin_ids
+            .contains(&actor)
+            .then_some(())
+            .ok_or(AppError::InstanceAdminRequired)
+    }
+
+    pub async fn list_instance_users(
+        &self,
+        actor: UserId,
+    ) -> Result<Vec<crate::ports::AdminUser>, AppError> {
+        self.require_instance_admin(actor)?;
+        let mut users = self.users.list_admin_users(100).await?;
+        for user in &mut users {
+            user.is_instance_admin = self.instance_admin_ids.contains(&user.user.id);
+        }
+        Ok(users)
+    }
+
+    pub async fn set_user_suspended(
+        &self,
+        actor: UserId,
+        target: UserId,
+        suspended: bool,
+    ) -> Result<crate::ports::AdminUser, AppError> {
+        self.require_instance_admin(actor)?;
+        if actor == target {
+            return Err(AppError::CannotSuspendSelf);
+        }
+        if self.instance_admin_ids.contains(&target) {
+            return Err(AppError::CannotModifyInstanceAdmin);
+        }
+        let mut user = self
+            .users
+            .set_user_suspended(actor, target, suspended, self.clock.now())
+            .await?;
+        user.is_instance_admin = false;
+        Ok(user)
+    }
+
+    pub fn with_email_delivery(
+        mut self,
+        delivery: Arc<dyn EmailDelivery>,
+        public_url: String,
+    ) -> Self {
+        self.email_delivery = Some(delivery);
+        self.public_url = Some(public_url.trim_end_matches('/').to_owned());
+        self
+    }
+
+    fn email_delivery(&self) -> Result<(&dyn EmailDelivery, &str), AppError> {
+        let delivery = self
+            .email_delivery
+            .as_deref()
+            .ok_or(AppError::EmailUnavailable)?;
+        let public_url = self
+            .public_url
+            .as_deref()
+            .ok_or(AppError::EmailUnavailable)?;
+        Ok((delivery, public_url))
+    }
+
+    pub async fn request_password_reset(
+        &self,
+        client_ip: IpAddr,
+        raw_email: &str,
+    ) -> Result<(), AppError> {
+        let (delivery, public_url) = self.email_delivery()?;
+        let now = self.clock.now();
+        let ip_key = login_ip_key(client_ip).replace("login:", "recovery:");
+        let ip_rule = self.config.rate_limits.login_per_ip;
+        let email_rule = self.config.rate_limits.login_failures_per_user;
+        self.enforce(&ip_key, ip_rule, now).await?;
+        self.limiter.record(&ip_key, ip_rule, now).await?;
+
+        let email = EmailAddress::parse(raw_email)?;
+        let email_digest = self.tokens.digest(email.as_str());
+        let email_key = format!("recovery:email:{:02x?}", email_digest.0);
+        self.enforce(&email_key, email_rule, now).await?;
+        self.limiter.record(&email_key, email_rule, now).await?;
+
+        let token = self.tokens.generate();
+        let raw = token.raw;
+        let digest = token.digest;
+        let expires_at = now + Duration::hours(1);
+        if self
+            .users
+            .issue_password_reset_token(&email, digest, now, expires_at)
+            .await?
+        {
+            let link = format!("{public_url}/reset-password?token={raw}");
+            if delivery
+                .send(
+                    &email,
+                    "Reset your RustChat password",
+                    &format!("Reset your password by opening this link:\n\n{link}\n\nThis link expires in one hour. If you did not request it, you can ignore this message."),
+                )
+                .await
+                .is_err()
+            {
+                tracing::warn!("password reset email delivery failed");
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn complete_password_reset(
+        &self,
+        raw_token: &str,
+        new_password: String,
+    ) -> Result<(), AppError> {
+        if raw_token.len() > 128 || raw_token.is_empty() {
+            return Err(AppError::InvalidAccountToken);
+        }
+        let password = PlainPassword::parse_new(new_password)?;
+        let hash = self.hasher.hash(password).await?;
+        let digest = self.tokens.digest(raw_token);
+        if self
+            .users
+            .reset_password_with_token(digest, hash, self.clock.now())
+            .await?
+        {
+            Ok(())
+        } else {
+            Err(AppError::InvalidAccountToken)
         }
     }
 
@@ -112,6 +255,17 @@ impl AuthService {
         username: &str,
         password: String,
     ) -> Result<User, AppError> {
+        self.register_with_email(client_ip, username, None, password)
+            .await
+    }
+
+    pub async fn register_with_email(
+        &self,
+        client_ip: IpAddr,
+        username: &str,
+        email: Option<&str>,
+        password: String,
+    ) -> Result<User, AppError> {
         if self.config.registration == RegistrationPolicy::Closed {
             return Err(AppError::RegistrationClosed);
         }
@@ -124,6 +278,7 @@ impl AuthService {
         self.limiter.record(&key, rule, now).await?;
 
         let username = Username::parse(username)?;
+        let email = email.map(EmailAddress::parse).transpose()?;
         let password = PlainPassword::parse_new(password)?;
         let password_hash = self.hasher.hash(password).await?;
 
@@ -137,6 +292,7 @@ impl AuthService {
             .create(NewUser {
                 id: user.id,
                 username: user.username.clone(),
+                email,
                 password_hash,
                 created_at: user.created_at,
             })
@@ -144,7 +300,55 @@ impl AuthService {
         match outcome {
             CreateUserOutcome::Created => Ok(user),
             CreateUserOutcome::UsernameTaken => Err(AppError::UsernameTaken),
+            CreateUserOutcome::EmailTaken => Err(AppError::EmailTaken),
         }
+    }
+
+    pub async fn profile(&self, user_id: UserId) -> Result<UserProfile, AppError> {
+        self.users.get_profile(user_id).await
+    }
+
+    pub async fn user_profile(
+        &self,
+        caller: UserId,
+        username: &str,
+    ) -> Result<UserProfile, AppError> {
+        let username = Username::parse(username)?;
+        self.users
+            .find_profile_for_caller(caller, &username)
+            .await?
+            .ok_or(AppError::NotFound)
+    }
+
+    pub async fn privacy(&self, user_id: UserId) -> Result<ProfilePrivacy, AppError> {
+        self.users.get_privacy(user_id).await
+    }
+
+    pub async fn update_privacy(
+        &self,
+        user_id: UserId,
+        privacy: ProfilePrivacy,
+    ) -> Result<ProfilePrivacy, AppError> {
+        self.users.update_privacy(user_id, privacy).await
+    }
+
+    pub async fn update_username(&self, user_id: UserId, username: &str) -> Result<User, AppError> {
+        let username = Username::parse(username)?;
+        self.users.update_username(user_id, &username).await
+    }
+
+    pub async fn update_profile(
+        &self,
+        user_id: UserId,
+        display_name: &str,
+        bio: &str,
+    ) -> Result<UserProfile, AppError> {
+        if display_name.chars().count() > 64 || bio.chars().count() > 280 {
+            return Err(AppError::InvalidProfile);
+        }
+        self.users
+            .update_profile(user_id, display_name.trim(), bio.trim(), self.clock.now())
+            .await
     }
 
     /// Verify credentials and start a new session. Unknown users, malformed
@@ -279,6 +483,167 @@ impl AuthService {
             Ok(())
         } else {
             Err(AppError::NotFound)
+        }
+    }
+
+    /// Change credentials after proving knowledge of the current password.
+    /// The current browser remains signed in; every other session is revoked
+    /// in the same database transaction as the password update.
+    pub async fn change_password(
+        &self,
+        auth: &AuthContext,
+        client_ip: IpAddr,
+        current_password: String,
+        new_password: String,
+    ) -> Result<(), AppError> {
+        let now = self.clock.now();
+        let ip_key = login_ip_key(client_ip);
+        let user_key = login_user_key(auth.user.username.as_str());
+        self.enforce(&ip_key, self.config.rate_limits.login_per_ip, now)
+            .await?;
+        self.enforce(
+            &user_key,
+            self.config.rate_limits.login_failures_per_user,
+            now,
+        )
+        .await?;
+        self.limiter
+            .record(&ip_key, self.config.rate_limits.login_per_ip, now)
+            .await?;
+
+        let Some(current_password) = PlainPassword::from_login_input(current_password) else {
+            self.limiter
+                .record(
+                    &user_key,
+                    self.config.rate_limits.login_failures_per_user,
+                    now,
+                )
+                .await?;
+            return Err(AppError::InvalidCredentials);
+        };
+        let credentials = self
+            .users
+            .find_credentials(&auth.user.username)
+            .await?
+            .ok_or(AppError::Unauthenticated)?;
+        if !self
+            .hasher
+            .verify(current_password, credentials.password_hash)
+            .await?
+        {
+            self.limiter
+                .record(
+                    &user_key,
+                    self.config.rate_limits.login_failures_per_user,
+                    now,
+                )
+                .await?;
+            return Err(AppError::InvalidCredentials);
+        }
+
+        let new_password = PlainPassword::parse_new(new_password)?;
+        let password_hash = self.hasher.hash(new_password).await?;
+        self.sessions
+            .update_password_and_revoke_other_sessions(
+                auth.user.id,
+                auth.session_id,
+                password_hash,
+                self.clock.now(),
+            )
+            .await?;
+        self.limiter.reset(&user_key).await?;
+        Ok(())
+    }
+
+    pub async fn deactivate_account(
+        &self,
+        auth: &AuthContext,
+        client_ip: IpAddr,
+        current_password: String,
+    ) -> Result<(), AppError> {
+        self.verify_current_password(auth, client_ip, current_password)
+            .await?;
+        self.users
+            .deactivate_account(auth.user.id, self.clock.now())
+            .await
+    }
+
+    pub async fn delete_account(
+        &self,
+        auth: &AuthContext,
+        client_ip: IpAddr,
+        current_password: String,
+    ) -> Result<(), AppError> {
+        self.verify_current_password(auth, client_ip, current_password)
+            .await?;
+        let opaque_secret = format!("deleted-{}", self.tokens.generate().raw);
+        let unusable_password_hash = self
+            .hasher
+            .hash(PlainPassword::parse_new(opaque_secret)?)
+            .await?;
+        let compact_id = auth.user.id.as_uuid().simple().to_string();
+        let tombstone_username = Username::parse(&format!("deleted_{}", &compact_id[..24]))?;
+        self.users
+            .delete_account(
+                auth.user.id,
+                &tombstone_username,
+                &unusable_password_hash,
+                self.clock.now(),
+            )
+            .await
+    }
+
+    async fn verify_current_password(
+        &self,
+        auth: &AuthContext,
+        client_ip: IpAddr,
+        raw: String,
+    ) -> Result<(), AppError> {
+        let now = self.clock.now();
+        let ip_key = login_ip_key(client_ip);
+        let user_key = login_user_key(auth.user.username.as_str());
+        self.enforce(&ip_key, self.config.rate_limits.login_per_ip, now)
+            .await?;
+        self.enforce(
+            &user_key,
+            self.config.rate_limits.login_failures_per_user,
+            now,
+        )
+        .await?;
+        self.limiter
+            .record(&ip_key, self.config.rate_limits.login_per_ip, now)
+            .await?;
+        let Some(password) = PlainPassword::from_login_input(raw) else {
+            self.limiter
+                .record(
+                    &user_key,
+                    self.config.rate_limits.login_failures_per_user,
+                    now,
+                )
+                .await?;
+            return Err(AppError::InvalidCredentials);
+        };
+        let credentials = self
+            .users
+            .find_credentials(&auth.user.username)
+            .await?
+            .ok_or(AppError::Unauthenticated)?;
+        if self
+            .hasher
+            .verify(password, credentials.password_hash)
+            .await?
+        {
+            self.limiter.reset(&user_key).await?;
+            Ok(())
+        } else {
+            self.limiter
+                .record(
+                    &user_key,
+                    self.config.rate_limits.login_failures_per_user,
+                    now,
+                )
+                .await?;
+            Err(AppError::InvalidCredentials)
         }
     }
 }
@@ -450,6 +815,41 @@ mod tests {
         assert!(matches!(
             h.auth.revoke_session(&ctx_a, b.session.id).await,
             Err(AppError::NotFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn deactivation_revokes_sessions_and_a_new_login_reactivates_the_account() {
+        let h = Harness::new(RegistrationPolicy::Open);
+        h.auth.register(IP, "alice", PASSWORD.into()).await.unwrap();
+        let first = h.auth.login(IP, "alice", PASSWORD.into()).await.unwrap();
+        let second = h.auth.login(IP, "alice", PASSWORD.into()).await.unwrap();
+        let ctx = h.auth.authenticate(&first.token).await.unwrap();
+        h.auth
+            .deactivate_account(&ctx, IP, PASSWORD.into())
+            .await
+            .unwrap();
+        assert!(h.auth.authenticate(&first.token).await.is_err());
+        assert!(h.auth.authenticate(&second.token).await.is_err());
+        let reactivated = h.auth.login(IP, "alice", PASSWORD.into()).await.unwrap();
+        assert!(h.auth.authenticate(&reactivated.token).await.is_ok());
+        assert!(h.auth.authenticate(&first.token).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn deletion_revokes_sessions_and_prevents_future_login() {
+        let h = Harness::new(RegistrationPolicy::Open);
+        h.auth.register(IP, "alice", PASSWORD.into()).await.unwrap();
+        let login = h.auth.login(IP, "alice", PASSWORD.into()).await.unwrap();
+        let ctx = h.auth.authenticate(&login.token).await.unwrap();
+        h.auth
+            .delete_account(&ctx, IP, PASSWORD.into())
+            .await
+            .unwrap();
+        assert!(h.auth.authenticate(&login.token).await.is_err());
+        assert!(matches!(
+            h.auth.login(IP, "alice", PASSWORD.into()).await,
+            Err(AppError::InvalidCredentials)
         ));
     }
 

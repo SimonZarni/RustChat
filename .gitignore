@@ -8,6 +8,8 @@ dist/
 coverage/
 *.tsbuildinfo
 .vite/
+playwright-report/
+test-results/
 
 # Secrets and local config
 .env

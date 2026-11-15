@@ -16,11 +16,13 @@ argon2 = "0.6.0"
 async-trait = "0.1.92"
 base64 = "0.23.1"
 getrandom = "0.4.3"
+lettre = { version = "0.11.23", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls", "ring", "webpki-roots"] }
 sha2 = "0.11.1"
-sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "time", "migrate", "macros"] }
+serde_json = "1.0.154"
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "time", "json", "migrate", "macros"] }
 time = "0.3.55"
 tokio = { version = "1.54.1", features = ["rt"] }
-uuid = "1.29.2"
+uuid = { version = "1.29.2", features = ["serde"] }
 
 [dev-dependencies]
 tokio = { version = "1.54.1", features = ["macros", "rt"] }

@@ -74,6 +74,11 @@ impl IntoResponse for ApiError {
                     "VALIDATION_ERROR",
                     e.to_string(),
                 ),
+                AppError::InvalidEmail(e) => body(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "VALIDATION_ERROR",
+                    e.to_string(),
+                ),
                 AppError::InvalidPassword(e) => body(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "VALIDATION_ERROR",
@@ -82,7 +87,12 @@ impl IntoResponse for ApiError {
                 AppError::UsernameTaken => body(
                     StatusCode::CONFLICT,
                     "USERNAME_TAKEN",
-                    "That username is already taken.",
+                    "That username or email is already in use.",
+                ),
+                AppError::EmailTaken => body(
+                    StatusCode::CONFLICT,
+                    "USERNAME_TAKEN",
+                    "That username or email is already in use.",
                 ),
                 AppError::RegistrationClosed => body(
                     StatusCode::FORBIDDEN,
@@ -113,6 +123,91 @@ impl IntoResponse for ApiError {
                 AppError::NotFound => {
                     body(StatusCode::NOT_FOUND, "NOT_FOUND", "Resource not found.")
                 }
+                AppError::CommunityOwnerCannotLeave => body(
+                    StatusCode::CONFLICT,
+                    "COMMUNITY_OWNER_CANNOT_LEAVE",
+                    "Transfer community ownership before leaving.",
+                ),
+                AppError::AccountOwnsCommunities => body(
+                    StatusCode::CONFLICT,
+                    "ACCOUNT_OWNS_COMMUNITIES",
+                    "Transfer community ownership before deactivating or deleting this account.",
+                ),
+                AppError::InvalidAccountConfirmation => body(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "CONFIRMATION_REQUIRED",
+                    "Set confirm to true to delete this account.",
+                ),
+                AppError::EmailUnavailable => body(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "EMAIL_UNAVAILABLE",
+                    "Account email delivery is not configured on this server.",
+                ),
+                AppError::InstanceAdminRequired => body(
+                    StatusCode::FORBIDDEN,
+                    "INSTANCE_ADMIN_REQUIRED",
+                    "Instance administrator privileges are required.",
+                ),
+                AppError::CannotSuspendSelf => body(
+                    StatusCode::CONFLICT,
+                    "CANNOT_SUSPEND_SELF",
+                    "Administrators cannot suspend their own account.",
+                ),
+                AppError::CannotModifyInstanceAdmin => body(
+                    StatusCode::CONFLICT,
+                    "CANNOT_MODIFY_INSTANCE_ADMIN",
+                    "Configured instance administrator accounts cannot be modified here.",
+                ),
+                AppError::InvalidAccountToken => body(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_ACCOUNT_TOKEN",
+                    "The account link is invalid or expired. Request a new one.",
+                ),
+                AppError::InvalidConversationRequest => body(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "INVALID_CONVERSATION",
+                    "The conversation request is invalid.",
+                ),
+                AppError::ConversationMemberLimit => body(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "MEMBER_LIMIT",
+                    "The conversation member limit was reached.",
+                ),
+                AppError::InvalidMessage(e) => body(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "VALIDATION_ERROR",
+                    e.to_string(),
+                ),
+                AppError::IdempotencyConflict => body(
+                    StatusCode::CONFLICT,
+                    "IDEMPOTENCY_CONFLICT",
+                    "The client message ID was already used with different content.",
+                ),
+                AppError::InvalidProfile => body(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "VALIDATION_ERROR",
+                    "Display name must be at most 64 characters and bio at most 280 characters.",
+                ),
+                AppError::InvalidReadCursor => body(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "INVALID_READ_CURSOR",
+                    "Read position must be between zero and the latest message sequence.",
+                ),
+                AppError::InvalidDeliveryCursor => body(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "INVALID_DELIVERY_CURSOR",
+                    "Delivered position must be between zero and the latest message sequence.",
+                ),
+                AppError::InvalidReaction(e) => body(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "INVALID_REACTION",
+                    e.to_string(),
+                ),
+                AppError::InvalidReactionRequest => body(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_REACTION_REQUEST",
+                    "Provide at most 100 valid message IDs.",
+                ),
                 AppError::Internal(detail) => {
                     // Log the cause server-side; never return it to the client.
                     tracing::error!(error = %detail, "internal error");

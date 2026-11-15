@@ -12,13 +12,19 @@ use axum::{
 use http_body_util::BodyExt;
 use rustchat_application::{
     auth::{AuthConfig, AuthService, RegistrationPolicy},
+    communities::{CommunityService, CommunityServiceConfig},
+    conversations::{ConversationConfig, ConversationService},
+    messages::{MessageConfig, MessageService},
     ports::RateLimitRule,
     ratelimit::RateLimitConfig,
 };
-use rustchat_http::{AppState, ClientIpSource, HttpConfig, router};
+use rustchat_http::{AppEvents, AppState, ClientIpSource, HttpConfig, router};
 use rustchat_infrastructure::{
     MIGRATOR,
-    postgres::{PgSessionRepository, PgUserRepository},
+    postgres::{
+        PgCommunityRepository, PgConversationRepository, PgMessageRepository, PgSessionRepository,
+        PgUserRepository,
+    },
     ratelimit::InMemoryRateLimiter,
     security::{Argon2Hasher, OsTokenService, SystemClock},
 };
@@ -52,7 +58,7 @@ fn app(pool: PgPool, rate_limits: RateLimitConfig, source: ClientIpSource) -> Ro
     let session_ttl = time::Duration::days(30);
     let auth = AuthService::new(
         Arc::new(PgUserRepository::new(pool.clone())),
-        Arc::new(PgSessionRepository::new(pool)),
+        Arc::new(PgSessionRepository::new(pool.clone())),
         Arc::new(Argon2Hasher::with_costs(8, 1, 1).unwrap()),
         Arc::new(OsTokenService),
         Arc::new(SystemClock),
@@ -63,8 +69,40 @@ fn app(pool: PgPool, rate_limits: RateLimitConfig, source: ClientIpSource) -> Ro
             rate_limits,
         },
     );
+    let conversations = ConversationService::new(
+        Arc::new(PgUserRepository::new(pool.clone())),
+        Arc::new(PgConversationRepository::new(pool.clone())),
+        ConversationConfig {
+            max_members: 100,
+            max_page_size: 100,
+        },
+    );
+    let messages = MessageService::new(
+        Arc::new(PgMessageRepository::new(pool.clone())),
+        MessageConfig { max_page_size: 100 },
+    );
+    let communities = CommunityService::new(
+        Arc::new(PgCommunityRepository::new(pool.clone())),
+        Arc::new(OsTokenService),
+        Arc::new(SystemClock),
+        CommunityServiceConfig {
+            max_invite_ttl: time::Duration::days(30),
+        },
+    );
     router(AppState::new(
         Arc::new(auth),
+        Arc::new(conversations),
+        Arc::new(messages),
+        Arc::new(communities),
+        AppEvents {
+            messages: tokio::sync::broadcast::channel(256).0,
+            typing: tokio::sync::broadcast::channel(256).0,
+            read_cursors: tokio::sync::broadcast::channel(256).0,
+            reactions: tokio::sync::broadcast::channel(256).0,
+            delivery_cursors: tokio::sync::broadcast::channel(256).0,
+            presence: tokio::sync::broadcast::channel(256).0,
+            community: tokio::sync::broadcast::channel(256).0,
+        },
         HttpConfig {
             allowed_origins: vec![ORIGIN.to_owned()],
             cookie_secure: true,

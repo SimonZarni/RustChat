@@ -13,9 +13,11 @@ workspace = true
 rustchat-application = { version = "0.0.0", path = "../../crates/application" }
 rustchat-infrastructure = { version = "0.0.0", path = "../../crates/infrastructure" }
 rustchat-http = { version = "0.0.0", path = "../../crates/http" }
+rustchat-domain = { version = "0.0.0", path = "../../crates/domain" }
 axum = "0.8.9"
 thiserror = "2.0.21"
 time = "0.3.55"
-tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "signal", "net"] }
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "signal", "net", "time"] }
+uuid = "1.29.2"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }

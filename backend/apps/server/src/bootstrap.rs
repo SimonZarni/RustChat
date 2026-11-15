@@ -4,13 +4,19 @@ use std::{net::SocketAddr, sync::Arc};
 
 use rustchat_application::{
     auth::{AuthConfig, AuthService},
+    communities::{CommunityService, CommunityServiceConfig},
+    conversations::{ConversationConfig, ConversationService},
     error::AppError,
-    ratelimit::RateLimitConfig,
+    messages::{MessageConfig, MessageService},
+    ports::OutboxRepository,
 };
-use rustchat_http::{AppState, HttpConfig, router};
+use rustchat_http::{AppEvents, AppState, HttpConfig, router};
 use rustchat_infrastructure::{
-    postgres::{self, PgSessionRepository, PgUserRepository},
-    ratelimit::InMemoryRateLimiter,
+    postgres::{
+        self, PgCommunityRepository, PgConversationRepository, PgMessageRepository,
+        PgOutboxRepository, PgSessionRepository, PgUserRepository,
+    },
+    ratelimit::PgRateLimiter,
     security::{Argon2Hasher, OsTokenService, SystemClock},
 };
 use tokio::net::TcpListener;
@@ -33,39 +39,129 @@ pub async fn migrate(database_url: &DatabaseUrl) -> Result<(), AppError> {
 
 pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     let pool = postgres::connect(config.database_url.expose(), config.db_max_connections).await?;
+    let (event_sender, _) = tokio::sync::broadcast::channel(512);
 
+    let users = Arc::new(PgUserRepository::new(pool.clone()));
     let auth = AuthService::new(
-        Arc::new(PgUserRepository::new(pool.clone())),
-        Arc::new(PgSessionRepository::new(pool)),
+        users.clone(),
+        Arc::new(PgSessionRepository::new(pool.clone())),
         Arc::new(Argon2Hasher::new()?),
         Arc::new(OsTokenService),
         Arc::new(SystemClock),
-        // Per-process limits; see InMemoryRateLimiter for the multi-instance caveat.
-        Arc::new(InMemoryRateLimiter::new()),
+        Arc::new(PgRateLimiter::new(pool.clone())),
         AuthConfig {
             registration: config.registration,
             session_ttl: SESSION_TTL,
-            rate_limits: RateLimitConfig::default(),
+            rate_limits: config.rate_limits,
         },
-    );
+    )
+    .with_instance_admins(config.admin_user_ids.iter().copied());
+    let auth = if let Some(email) = config.email.as_ref() {
+        auth.with_email_delivery(
+            Arc::new(rustchat_infrastructure::email::SmtpEmailDelivery::new(
+                &email.host,
+                email.port,
+                email.username.as_deref(),
+                email.password.as_deref(),
+                &email.from,
+            )?),
+            email.public_url.clone(),
+        )
+    } else {
+        auth
+    };
+    let conversations = Arc::new(ConversationService::new(
+        users,
+        Arc::new(PgConversationRepository::new(pool.clone())),
+        ConversationConfig {
+            max_members: config.group_member_limit,
+            max_page_size: 100,
+        },
+    ));
+    let messages = Arc::new(MessageService::new(
+        Arc::new(PgMessageRepository::new(pool.clone())),
+        MessageConfig { max_page_size: 100 },
+    ));
+    let communities = Arc::new(CommunityService::new(
+        Arc::new(PgCommunityRepository::new(pool.clone())),
+        Arc::new(OsTokenService),
+        Arc::new(SystemClock),
+        CommunityServiceConfig {
+            max_invite_ttl: time::Duration::days(30),
+        },
+    ));
+    let (typing_sender, _) = tokio::sync::broadcast::channel(256);
+    let (read_cursor_sender, _) = tokio::sync::broadcast::channel(256);
+    let (reaction_sender, _) = tokio::sync::broadcast::channel(256);
+    let (delivery_cursor_sender, _) = tokio::sync::broadcast::channel(256);
+    let (presence_sender, _) = tokio::sync::broadcast::channel(256);
+    let (community_sender, _) = tokio::sync::broadcast::channel(256);
     let state = AppState::new(
         Arc::new(auth),
+        conversations,
+        messages,
+        communities,
+        AppEvents {
+            messages: event_sender.clone(),
+            typing: typing_sender,
+            read_cursors: read_cursor_sender,
+            reactions: reaction_sender,
+            delivery_cursors: delivery_cursor_sender,
+            presence: presence_sender,
+            community: community_sender,
+        },
         HttpConfig {
             allowed_origins: config.allowed_origins,
             cookie_secure: config.cookie_secure,
             session_ttl: SESSION_TTL,
             client_ip: config.client_ip,
         },
-    );
+    )
+    .with_readiness_probe({
+        let pool = pool.clone();
+        move || {
+            let pool = pool.clone();
+            async move { postgres::ready(&pool).await }
+        }
+    });
 
     let listener = TcpListener::bind(config.bind_addr).await?;
     tracing::info!(addr = %listener.local_addr()?, "rustchat server listening");
     // Connection info exposes the peer address used for rate limiting.
-    axum::serve(
+    let outbox = PgOutboxRepository::new(pool.clone());
+    let publisher = tokio::spawn(async move {
+        loop {
+            match outbox.pending_messages(128).await {
+                Ok(pending) if pending.is_empty() => {
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                }
+                Ok(pending) => {
+                    for message in pending {
+                        let id = message.id;
+                        // Broadcast is bounded and process-local. The after_sequence API
+                        // recovers any event missed by a disconnected or slow client.
+                        let _ = event_sender.send(message);
+                        if let Err(error) = outbox.mark_message_published(id).await {
+                            tracing::error!(%error, "failed to mark outbox message published");
+                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                            break;
+                        }
+                    }
+                }
+                Err(error) => {
+                    tracing::error!(%error, "failed to poll message outbox");
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+            }
+        }
+    });
+    let serve_result = axum::serve(
         listener,
         router(state).into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(shutdown::signal())
-    .await?;
+    .await;
+    publisher.abort();
+    serve_result?;
     Ok(())
 }

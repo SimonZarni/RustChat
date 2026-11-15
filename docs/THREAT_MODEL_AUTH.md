@@ -2,7 +2,7 @@
 
 ## 1. Status
 
-Initial Phase 0 draft, written before any authentication code exists. It must be reviewed and extended as design decisions in [SECURITY.md](SECURITY.md) and the PRD's open decisions are resolved.
+Living threat model, initially drafted during Phase 0 and updated as authentication and conversation features are implemented. Continue extending it as design decisions in [SECURITY.md](SECURITY.md) and the PRD's open decisions are resolved.
 
 ## 2. Scope
 
@@ -13,6 +13,7 @@ Accounts, login, sessions, WebSocket authentication and resource authorization f
 - Account credentials (password hashes, reset tokens).
 - Session identifiers and device records.
 - Private message content and conversation membership.
+- Message reactions and their membership visibility.
 - Community roles and permissions.
 - Audit logs.
 
@@ -34,6 +35,11 @@ Accounts, login, sessions, WebSocket authentication and resource authorization f
 | CSRF on cookie-authenticated requests | SameSite plus explicit CSRF token or origin check on state-changing requests | Cross-origin request rejected |
 | WebSocket hijacking | Origin validation; no long-lived tokens in URLs | Disallowed origin refused |
 | IDOR / BOLA | Every query scoped to the authenticated principal and resource membership | Per-endpoint denied-case tests |
+| Unauthorized reaction access | Read and mutation endpoints verify conversation membership and channel visibility; database constraints bind each reaction to its message, conversation and member | Reaction idempotency and outsider-denial API tests |
+| Forged delivery acknowledgement | Acknowledgement is bound to the authenticated member and conversation; sequence cannot exceed the server's latest sequence and the stored cursor only advances | Monotonicity, bounds and outsider-denial API tests |
+| Cross-conversation reply reference | Reply targets are checked against the sending conversation; a composite database foreign key also binds target and reply to the same conversation | API test for foreign targets, durable reply history and idempotency conflicts |
+| Mention leaks unrelated accounts | Mention resolution searches only current conversation members; membership-scoped foreign keys constrain persisted targets | API tests verify members resolve, outsiders do not, and edits refresh the set |
+| Profile enumeration or privacy bypass | Exact username lookup enforces discoverability and profile visibility; direct/group creation uses the same discoverability rule, with existing conversation membership as the only hidden-user exception | API tests cover unknown/unlisted users, hidden profile access, and existing conversation-member access |
 | Privilege escalation via roles | Role hierarchy enforced server-side; cannot grant what you cannot delegate | Escalation and conflicting-override tests |
 | Stale permissions on live connections | Permission change triggers subscription revalidation | Removed member stops receiving events |
 | Reset token abuse | Short-lived, single-use, stored hashed | Reuse and expiry tests |
@@ -43,23 +49,27 @@ Accounts, login, sessions, WebSocket authentication and resource authorization f
 
 ## 6. Implementation status
 
-Updated after the accounts-and-sessions slice. "Tested" means an automated test exists and, for the starred rows, was mutation-checked (the control was deliberately broken and a test failed).
+Updated through community roles, message editing/deletion/replies/mentions/reactions, password changes, account lifecycle endpoints, shared authentication rate limits, delivery acknowledgements, WebSocket delivery, and the initial web client. "Tested" means an automated test exists and, for the starred rows, was mutation-checked (the control was deliberately broken and a test failed).
 
 | Threat | Status |
 |---|---|
-| Credential stuffing / brute force | Mitigated for a single instance and tested\*: per-network limit on all login attempts, per-username limit on failures (applies to unknown names too), per-network registration limit, all checked before hashing. Limits are per process and not shared across instances. Residual risk: a distributed attack (many networks) against one account is capped at 10 guesses per 15 minutes, and the same cap lets an attacker deliberately keep a victim's logins blocked for up to 15 minutes (accepted trade-off; the victim's existing sessions are unaffected) |
+| Credential stuffing / brute force | Mitigated and tested\*: per-network limit on all login attempts, per-username limit on failures (applies to unknown names too), per-network registration limit, all checked before hashing. The production limiter stores only SHA-256 key digests in PostgreSQL, so instances sharing the database share budgets. Residual risk: a distributed attack across many networks against one account is capped at 10 guesses per 15 minutes, and the same cap lets an attacker deliberately keep a victim's logins blocked for up to 15 minutes (accepted trade-off; the victim's existing sessions are unaffected). Database unavailability also prevents authentication rate-limit checks and fails these requests closed. |
 | Account enumeration | Login: mitigated and tested (uniform response, dummy hash for unknown users)\*. Registration still reveals taken usernames; accepted for username-only accounts |
 | Password database leak | Implemented and tested: Argon2id (19 MiB, t=2, p=1), per-hash salt |
 | Session theft | Partly: random 256-bit token, only its SHA-256 stored, `HttpOnly`/`Secure`/`SameSite=Strict`/`__Host-` cookie, new token per login, 30-day absolute expiry. No idle timeout yet |
-| Session not revoked | Implemented and tested for HTTP (logout, per-session revoke, expiry). WebSocket revalidation not applicable until WebSockets exist |
+| Session not revoked | Implemented and tested for HTTP (logout, per-session revoke, expiry); WebSocket sessions are revalidated every 30 seconds |
 | CSRF | Implemented and tested: exact `Origin` allow-list on all state-changing requests, plus `SameSite=Strict`\* |
-| WebSocket hijacking | Not applicable yet |
-| IDOR / BOLA | Implemented and tested for sessions: revoke is scoped to the owner in the SQL statement itself and in the use case\* |
-| Privilege escalation via roles | Not applicable yet |
-| Stale permissions on live connections | Not applicable yet |
-| Reset token abuse | Not applicable; password reset is not implemented |
-| Replay / duplicate requests | Registration duplicates are rejected by a database constraint. Message idempotency is future work |
-| Resource exhaustion | Partly: 16 KiB body limit, bounded DB pool, password length cap (128), limiter memory capped at 100,000 keys, limited requests skip hashing. Other endpoints and unauthenticated request volume are not rate limited yet; put a proxy-level limit in front for production |
+| WebSocket hijacking | Handshake requires the session cookie and an exact configured `Origin`; tokens are not placed in URLs. Automated socket-level tests are still needed |
+| IDOR / BOLA | Implemented and API-tested for sessions, conversations, member profiles, messages, communities, channels, and role operations. Access is membership/permission scoped; hidden resources return `404` |
+| Profile enumeration or privacy bypass | Implemented and tested: discoverability gates exact lookup and new conversation creation; conversation-only profiles are available to existing conversation members; hidden profiles return `404` |
+| Presence disclosure outside a shared conversation or against user settings | Implemented: server checks shared conversation membership and `presence_visible` before sending online/offline updates; privacy changes clear or refresh the recipient state. Covered by WebSocket integration tests |
+| Unauthorized reaction access | Implemented and API-tested: reaction lists and writes require membership and channel read permission; outsider requests return `404`; composite database foreign keys bind reactions to the message and current member |
+| Forged delivery acknowledgement | Implemented and API-tested: only conversation members can advance delivery state, and sequence bounds plus monotonic updates are enforced in PostgreSQL transactions |
+| Privilege escalation via roles | Role hierarchy and delegated permission checks are implemented and API-tested, including channel overrides and owner-only lifecycle operations |
+| Stale permissions on live connections | Subscriptions and permissions are rechecked every 30 seconds and removed when access disappears. A revoked member may receive events during that interval |
+| Reset token abuse | Password reset uses one-hour random tokens stored as SHA-256 digests; successful use is atomic and single-use, and revokes all sessions. API coverage verifies replay and expiry. SMTP failures are logged without exposing account existence in the response; provider-side delivery remains an operational dependency |
+| Replay / duplicate requests | Tested API behavior: message retry with the same sender, conversation, client ID and content returns the original record; changed content conflicts. Message insertion and outbox event are transactional. Socket event delivery is at least once; clients deduplicate and recover by synchronizing message history |
+| Resource exhaustion | Partly: 16 KiB body and WebSocket frame limits, bounded DB pool, password length cap (128), message size cap (4,000 chars / 16,000 bytes), limiter memory capped at 100,000 keys, 512-event process bus, 100 subscriptions per connection, group member cap (configurable 2–500), page size cap (100), limited requests skip hashing. Other endpoints and unauthenticated request volume are not rate limited yet; put a proxy-level limit in front for production |
 | Client IP spoofing to evade limits | Implemented and tested\*: `X-Forwarded-For` is ignored unless trusted proxy hops are configured, then only the entry the trusted proxy appended is used; missing connection info fails closed. Misconfiguration (hops set while the server is directly reachable) lets clients choose their own address, so it is documented as proxy-only |
 | Secret leakage | Partly: passwords and tokens have redacted `Debug`, internal errors are logged server-side and never returned, database URL is redacted. Verified once by inspecting the server log for the password; there is no automated log-content test yet |
 
@@ -67,4 +77,4 @@ Updated after the accounts-and-sessions slice. "Tested" means an automated test 
 
 - Desktop client authentication: the cookie model assumes the Tauri webview can hold the cookie; confirm when the desktop app is built.
 - Rate-limit values are initial defaults and are not configurable yet. Replace the in-process limiter with a Valkey-backed one before running multiple instances, and decide fail-open versus fail-closed when Valkey is unavailable.
-- Email verification and password-reset policy (PRD open decisions); email is deferred.
+- Email verification remains deferred. Password reset uses the account recovery email and requires SMTP configuration.

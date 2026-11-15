@@ -67,6 +67,8 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
+      - run: pnpm --filter @rustchat/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @rustchat/web test:e2e
       - run: pnpm build
 
   # Licence policy, known vulnerabilities and sources for all dependencies.

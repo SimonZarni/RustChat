@@ -27,9 +27,11 @@ Statuses: `Proposed`, `Accepted`, `Superseded by NNNN`, `Rejected`.
 | [0002](0002-modular-monolith-with-layered-crates.md) | Modular monolith with layered crates | Accepted |
 | [0003](0003-garage-for-object-storage.md) | Garage for object storage | Accepted |
 | [0004](0004-server-side-sessions-in-http-only-cookies.md) | Server-side sessions in HttpOnly cookies | Accepted |
-| [0005](0005-username-password-accounts-with-configurable-registration.md) | Username and password accounts, configurable registration, email deferred | Accepted |
+| [0005](0005-username-password-accounts-with-configurable-registration.md) | Username and password accounts, configurable registration, email deferred | Superseded by 0010 |
 | [0006](0006-in-process-rate-limiting-behind-a-port.md) | In-process rate limiting behind a port | Accepted |
 | [0007](0007-apache-2-licence.md) | Apache-2.0 licence | Accepted |
 | [0008](0008-explicit-database-migrations.md) | Explicit database migrations | Accepted |
+| [0009](0009-single-instance-websocket-outbox-dispatch.md) | Single-instance WebSocket delivery from the PostgreSQL outbox | Accepted |
+| [0010](0010-optional-email-password-recovery.md) | Optional email-based password recovery; verification deferred | Accepted |
 
 ADRs 0001 to 0008 were written on 2026-11-14, after the decisions had been made in earlier work; their dates reflect when they were recorded, not when the choice was first discussed.

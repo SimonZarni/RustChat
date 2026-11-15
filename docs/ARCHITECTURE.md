@@ -2,7 +2,7 @@
 
 ## 1. Purpose and status
 
-This document describes the intended high-level architecture of RustChat. The project is in early implementation (Phase 1): the workspace layering and the accounts, sessions and rate-limiting slice exist, while everything else here is still intended design. Verify implementation details against the code.
+This document describes the intended high-level architecture and current implementation of RustChat. Phase 0 is complete. Phase 1 implementation includes identity, editable profiles and privacy-scoped presence, authenticated password change, account lifecycle, rate-limiting flows, conversations, communities, channels and permissions, durable messaging, emoji reactions, read and delivery cursors, single-instance WebSocket delivery for messages, presence, typing, reactions, delivery cursors, and community-scoped member/channel invalidations, plus an initial web client with community management controls. Password reset and instance administration are implemented. Screen-reader review, broader workflow review and operational validation remain in progress. Later sections distinguish implemented components from planned architecture; verify details against the code and API documentation.
 
 RustChat is a self-hostable real-time communication platform with a Rust backend and a shared React frontend for web and desktop.
 
@@ -52,26 +52,26 @@ The RustChat application initially runs as a modular monolith. HTTP handling, We
 
 ## 4. Technology choices
 
-| Area | Planned choice |
+| Area | Current choice / status |
 |---|---|
 | Backend language | Rust |
 | Async runtime | Tokio |
 | HTTP framework | Axum |
 | Database access | SQLx |
 | Primary database | PostgreSQL |
-| Cache / ephemeral coordination | Valkey |
+| Cache / ephemeral coordination | Valkey is present in local development, but application rate limits and realtime fan-out are process-local; no Valkey adapter is implemented |
 | Realtime client transport | WebSocket |
 | Web frontend | React + TypeScript + Vite |
 | Desktop wrapper | Tauri 2 |
-| UI styling | Tailwind CSS + shadcn/ui |
-| Server state | TanStack Query |
-| Local UI state | Zustand |
-| Object storage | Garage (S3-compatible) |
-| Voice/media | Self-hosted LiveKit |
+| UI styling | CSS |
+| Server state | React component state and fetch |
+| Local UI state | React component state |
+| Object storage | Garage (S3-compatible), planned for Phase 2 |
+| Voice/media | Self-hosted LiveKit, planned for Phase 2 |
 | Reverse proxy | Caddy |
 | Deployment | Docker Engine + Docker Compose |
 
-These are proposed choices, not a substitute for checking current compatibility, security, maintenance and licences before adoption.
+The current implementation uses the choices marked current. Services and libraries marked planned are not implemented dependencies; review compatibility, security, maintenance and licences before adopting them.
 
 ## 5. Backend architecture
 
@@ -112,7 +112,7 @@ backend/
 └── tests/
 ```
 
-**Current state:** the workspace has `crates/domain`, `crates/application`, `crates/infrastructure` and `crates/http` (the HTTP part of `interfaces`), plus `apps/server` for bootstrap. Domain modules are flat files inside `domain` until there is enough code to justify the per-area directories shown above. Only the identity area exists. `crates/websocket`, `protocol` and `shared` have not been created.
+**Current state:** the workspace has `crates/domain`, `crates/application`, `crates/infrastructure` and `crates/http` (the HTTP part of `interfaces`), plus `apps/server` for bootstrap. Identity, editable basic profiles and privacy-scoped presence, authenticated password change, conversations, communities, channels, roles and permissions, plain-text message persistence with same-conversation replies, member mentions and reactions, read and delivery cursors, and single-instance WebSocket message, presence, typing, reaction and delivery-ack delivery are implemented. Multi-instance fan-out and the planned Valkey adapter are not implemented. Domain modules are flat files until there is enough code to justify the per-area directories shown above. `crates/websocket`, `protocol` and `shared` have not been created.
 
 ### Dependency rules
 

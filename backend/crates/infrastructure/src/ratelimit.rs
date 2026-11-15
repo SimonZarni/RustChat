@@ -1,4 +1,4 @@
-//! In-process rate limiter.
+//! Rate-limit implementations.
 //!
 //! Fixed-window counters held in memory. State is per process: it is lost on
 //! restart and not shared between instances, so a multi-instance deployment
@@ -7,6 +7,7 @@
 //! Memory is bounded: at most `max_keys` entries are kept, so an attacker
 //! presenting endless distinct keys cannot grow the process without limit.
 
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     sync::{Mutex, MutexGuard, PoisonError},
@@ -18,6 +19,85 @@ use rustchat_application::{
     ports::{RateLimitDecision, RateLimitRule, RateLimiter},
 };
 use time::OffsetDateTime;
+
+/// PostgreSQL-backed counters shared by every server using the same database.
+/// Keys are stored as SHA-256 digests so usernames and client addresses are
+/// not retained in the rate-limit table.
+pub struct PgRateLimiter {
+    pool: sqlx::PgPool,
+}
+
+impl PgRateLimiter {
+    pub fn new(pool: sqlx::PgPool) -> Self {
+        Self { pool }
+    }
+
+    fn digest(key: &str) -> [u8; 32] {
+        Sha256::digest(key.as_bytes()).into()
+    }
+}
+
+#[async_trait]
+impl RateLimiter for PgRateLimiter {
+    async fn check(
+        &self,
+        key: &str,
+        rule: RateLimitRule,
+        now: OffsetDateTime,
+    ) -> Result<RateLimitDecision, AppError> {
+        let entry = sqlx::query_as::<_, (i64, OffsetDateTime)>(
+            "SELECT count, expires_at FROM rate_limit_entries WHERE key_digest = $1",
+        )
+        .bind(Self::digest(key).as_slice())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(AppError::internal)?;
+
+        Ok(match entry {
+            Some((count, expires_at)) if expires_at > now && count >= i64::from(rule.max) => {
+                RateLimitDecision::Limited {
+                    retry_after: expires_at - now,
+                }
+            }
+            _ => RateLimitDecision::Allowed,
+        })
+    }
+
+    async fn record(
+        &self,
+        key: &str,
+        rule: RateLimitRule,
+        now: OffsetDateTime,
+    ) -> Result<(), AppError> {
+        let expires_at = now + rule.window;
+        sqlx::query(
+            "WITH cleanup AS (DELETE FROM rate_limit_entries WHERE expires_at <= $2) \
+             INSERT INTO rate_limit_entries (key_digest, count, expires_at) \
+             VALUES ($1, 1, $3) \
+             ON CONFLICT (key_digest) DO UPDATE SET \
+                 count = CASE WHEN rate_limit_entries.expires_at <= $2 \
+                              THEN 1 ELSE rate_limit_entries.count + 1 END, \
+                 expires_at = CASE WHEN rate_limit_entries.expires_at <= $2 \
+                                   THEN $3 ELSE rate_limit_entries.expires_at END",
+        )
+        .bind(Self::digest(key).as_slice())
+        .bind(now)
+        .bind(expires_at)
+        .execute(&self.pool)
+        .await
+        .map_err(AppError::internal)?;
+        Ok(())
+    }
+
+    async fn reset(&self, key: &str) -> Result<(), AppError> {
+        sqlx::query("DELETE FROM rate_limit_entries WHERE key_digest = $1")
+            .bind(Self::digest(key).as_slice())
+            .execute(&self.pool)
+            .await
+            .map_err(AppError::internal)?;
+        Ok(())
+    }
+}
 
 /// Default cap on tracked keys (a few MiB at most).
 pub const DEFAULT_MAX_KEYS: usize = 100_000;
@@ -279,5 +359,27 @@ mod tests {
         }
         hit(&l, "k", r, 1).await;
         assert!(!allowed(&l, "k", r, 2).await);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn postgres_limits_are_shared_between_instances_and_resettable(pool: sqlx::PgPool) {
+        let first = PgRateLimiter::new(pool.clone());
+        let second = PgRateLimiter::new(pool);
+        let r = rule(1, 60);
+        let now = T0 + Duration::seconds(100);
+
+        first.record("login:user:alice", r, now).await.unwrap();
+        assert_eq!(
+            second.check("login:user:alice", r, now).await.unwrap(),
+            RateLimitDecision::Limited {
+                retry_after: Duration::seconds(60)
+            }
+        );
+
+        second.reset("login:user:alice").await.unwrap();
+        assert_eq!(
+            first.check("login:user:alice", r, now).await.unwrap(),
+            RateLimitDecision::Allowed
+        );
     }
 }

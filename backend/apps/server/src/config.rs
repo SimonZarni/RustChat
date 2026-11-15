@@ -1,12 +1,18 @@
 //! Runtime configuration, read from environment variables.
 
-use std::{fmt, net::SocketAddr, num::NonZeroUsize};
+use std::{collections::HashSet, fmt, net::SocketAddr, num::NonZeroUsize};
 
 use rustchat_application::auth::RegistrationPolicy;
+use rustchat_application::{ports::RateLimitRule, ratelimit::RateLimitConfig};
+use rustchat_domain::identity::UserId;
 use rustchat_http::ClientIpSource;
+use uuid::Uuid;
 
 const DEFAULT_BIND: &str = "127.0.0.1:8080";
 const DEFAULT_DB_MAX_CONNECTIONS: u32 = 10;
+const DEFAULT_GROUP_MEMBER_LIMIT: usize = 100;
+const MAX_GROUP_MEMBER_LIMIT: usize = 500;
+const MAX_RATE_LIMIT: u32 = 100_000;
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ConfigError {
@@ -16,6 +22,8 @@ pub enum ConfigError {
     MissingDatabaseUrl,
     #[error("RUSTCHAT_REGISTRATION must be `open` or `closed`")]
     InvalidRegistration,
+    #[error("RUSTCHAT_ADMIN_USER_IDS must be a comma-separated list of UUIDs")]
+    InvalidAdminUserIds,
     #[error(
         "RUSTCHAT_ALLOWED_ORIGINS is required (comma-separated, e.g. https://chat.example.com)"
     )]
@@ -28,6 +36,18 @@ pub enum ConfigError {
     InvalidDbMaxConnections,
     #[error("RUSTCHAT_TRUSTED_PROXY_HOPS must be a non-negative integer")]
     InvalidTrustedProxyHops,
+    #[error("RUSTCHAT_GROUP_MEMBER_LIMIT must be between 2 and 500")]
+    InvalidGroupMemberLimit,
+    #[error("authentication rate limits must be between 1 and 100000")]
+    InvalidRateLimit,
+    #[error(
+        "SMTP configuration requires RUSTCHAT_SMTP_HOST, RUSTCHAT_EMAIL_FROM, and RUSTCHAT_PUBLIC_URL"
+    )]
+    IncompleteEmailConfig,
+    #[error("RUSTCHAT_SMTP_PORT must be a valid port number")]
+    InvalidSmtpPort,
+    #[error("RUSTCHAT_SMTP_USERNAME and RUSTCHAT_SMTP_PASSWORD must be configured together")]
+    IncompleteSmtpCredentials,
 }
 
 /// A database URL. It usually embeds a password, so `Debug` is redacted.
@@ -63,9 +83,36 @@ pub struct Config {
     pub database_url: DatabaseUrl,
     pub db_max_connections: u32,
     pub registration: RegistrationPolicy,
+    pub admin_user_ids: HashSet<UserId>,
     pub allowed_origins: Vec<String>,
     pub cookie_secure: bool,
     pub client_ip: ClientIpSource,
+    pub group_member_limit: usize,
+    pub rate_limits: RateLimitConfig,
+    pub email: Option<EmailConfig>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct EmailConfig {
+    pub host: String,
+    pub port: u16,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub from: String,
+    pub public_url: String,
+}
+
+impl fmt::Debug for EmailConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EmailConfig")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("username", &self.username.as_ref().map(|_| "<redacted>"))
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .field("from", &self.from)
+            .field("public_url", &self.public_url)
+            .finish()
+    }
 }
 
 fn is_valid_origin(origin: &str) -> bool {
@@ -103,6 +150,62 @@ impl Config {
             Some(_) => return Err(ConfigError::InvalidRegistration),
         };
 
+        let admin_user_ids = lookup("RUSTCHAT_ADMIN_USER_IDS")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                Uuid::parse_str(value)
+                    .map(UserId::from_uuid)
+                    .map_err(|_| ConfigError::InvalidAdminUserIds)
+            })
+            .collect::<Result<HashSet<_>, _>>()?;
+
+        let group_member_limit = match lookup("RUSTCHAT_GROUP_MEMBER_LIMIT") {
+            None => DEFAULT_GROUP_MEMBER_LIMIT,
+            Some(raw) => raw
+                .parse::<usize>()
+                .ok()
+                .filter(|n| (2..=MAX_GROUP_MEMBER_LIMIT).contains(n))
+                .ok_or(ConfigError::InvalidGroupMemberLimit)?,
+        };
+
+        let default_rate_limits = RateLimitConfig::default();
+        let rate_limit = |key: &str, default: u32| -> Result<u32, ConfigError> {
+            match lookup(key) {
+                None => Ok(default),
+                Some(raw) => raw
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|limit| (1..=MAX_RATE_LIMIT).contains(limit))
+                    .ok_or(ConfigError::InvalidRateLimit),
+            }
+        };
+        let rate_limits = RateLimitConfig {
+            login_per_ip: RateLimitRule {
+                max: rate_limit(
+                    "RUSTCHAT_LOGIN_PER_IP_LIMIT",
+                    default_rate_limits.login_per_ip.max,
+                )?,
+                window: default_rate_limits.login_per_ip.window,
+            },
+            login_failures_per_user: RateLimitRule {
+                max: rate_limit(
+                    "RUSTCHAT_LOGIN_PER_USERNAME_LIMIT",
+                    default_rate_limits.login_failures_per_user.max,
+                )?,
+                window: default_rate_limits.login_failures_per_user.window,
+            },
+            register_per_ip: RateLimitRule {
+                max: rate_limit(
+                    "RUSTCHAT_REGISTER_PER_IP_LIMIT",
+                    default_rate_limits.register_per_ip.max,
+                )?,
+                window: default_rate_limits.register_per_ip.window,
+            },
+        };
+
         let allowed_origins: Vec<String> = lookup("RUSTCHAT_ALLOWED_ORIGINS")
             .unwrap_or_default()
             .split(',')
@@ -138,14 +241,48 @@ impl Config {
             }
         };
 
+        let smtp_host = lookup("RUSTCHAT_SMTP_HOST").filter(|value| !value.trim().is_empty());
+        let email_from = lookup("RUSTCHAT_EMAIL_FROM").filter(|value| !value.trim().is_empty());
+        let public_url = lookup("RUSTCHAT_PUBLIC_URL").filter(|value| !value.trim().is_empty());
+        let email = if smtp_host.is_none() && email_from.is_none() && public_url.is_none() {
+            None
+        } else {
+            let host = smtp_host.ok_or(ConfigError::IncompleteEmailConfig)?;
+            let from = email_from.ok_or(ConfigError::IncompleteEmailConfig)?;
+            let public_url = public_url.ok_or(ConfigError::IncompleteEmailConfig)?;
+            let port = lookup("RUSTCHAT_SMTP_PORT")
+                .unwrap_or_else(|| "465".to_owned())
+                .parse::<u16>()
+                .ok()
+                .filter(|port| *port > 0)
+                .ok_or(ConfigError::InvalidSmtpPort)?;
+            let username = lookup("RUSTCHAT_SMTP_USERNAME").filter(|value| !value.is_empty());
+            let password = lookup("RUSTCHAT_SMTP_PASSWORD").filter(|value| !value.is_empty());
+            if username.is_some() != password.is_some() {
+                return Err(ConfigError::IncompleteSmtpCredentials);
+            }
+            Some(EmailConfig {
+                host,
+                port,
+                username,
+                password,
+                from,
+                public_url,
+            })
+        };
+
         Ok(Self {
             bind_addr,
             database_url,
             db_max_connections,
             registration,
+            admin_user_ids,
             allowed_origins,
             cookie_secure,
             client_ip,
+            group_member_limit,
+            rate_limits,
+            email,
         })
     }
 
@@ -183,9 +320,36 @@ mod tests {
         let config = with(&[]).unwrap();
         assert_eq!(config.bind_addr, "127.0.0.1:8080".parse().unwrap());
         assert_eq!(config.registration, RegistrationPolicy::Open);
+        assert!(config.admin_user_ids.is_empty());
         assert!(config.cookie_secure);
         assert_eq!(config.db_max_connections, 10);
         assert_eq!(config.client_ip, ClientIpSource::Peer);
+        assert_eq!(config.group_member_limit, 100);
+        assert_eq!(config.rate_limits, RateLimitConfig::default());
+        assert!(config.email.is_none());
+    }
+
+    #[test]
+    fn smtp_settings_are_optional_complete_and_redacted() {
+        let email_config = with(&[
+            ("RUSTCHAT_SMTP_HOST", "smtp.example.test"),
+            ("RUSTCHAT_SMTP_USERNAME", "mailer"),
+            ("RUSTCHAT_SMTP_PASSWORD", "smtp-secret"),
+            ("RUSTCHAT_EMAIL_FROM", "RustChat <chat@example.test>"),
+            ("RUSTCHAT_PUBLIC_URL", "https://chat.example.test"),
+        ])
+        .unwrap()
+        .email
+        .unwrap();
+        let debug = format!("{email_config:?}");
+        assert!(debug.contains("smtp.example.test"));
+        assert!(!debug.contains("smtp-secret"));
+        assert!(!debug.contains("mailer"));
+        assert_eq!(email_config.port, 465);
+        assert_eq!(
+            with(&[("RUSTCHAT_SMTP_HOST", "smtp.example.test")]).unwrap_err(),
+            ConfigError::IncompleteEmailConfig
+        );
     }
 
     #[test]
@@ -216,6 +380,14 @@ mod tests {
             ("RUSTCHAT_REGISTRATION", "closed"),
             ("RUSTCHAT_COOKIE_SECURE", "false"),
             ("RUSTCHAT_DB_MAX_CONNECTIONS", "3"),
+            ("RUSTCHAT_GROUP_MEMBER_LIMIT", "64"),
+            ("RUSTCHAT_LOGIN_PER_IP_LIMIT", "24"),
+            ("RUSTCHAT_LOGIN_PER_USERNAME_LIMIT", "8"),
+            ("RUSTCHAT_REGISTER_PER_IP_LIMIT", "4"),
+            (
+                "RUSTCHAT_ADMIN_USER_IDS",
+                "00000000-0000-0000-0000-000000000001",
+            ),
             (
                 "RUSTCHAT_ALLOWED_ORIGINS",
                 "http://localhost:5173, https://a.test",
@@ -226,9 +398,26 @@ mod tests {
         assert_eq!(config.registration, RegistrationPolicy::Closed);
         assert!(!config.cookie_secure);
         assert_eq!(config.db_max_connections, 3);
+        assert_eq!(config.group_member_limit, 64);
+        assert_eq!(config.rate_limits.login_per_ip.max, 24);
+        assert_eq!(config.rate_limits.login_failures_per_user.max, 8);
+        assert_eq!(config.rate_limits.register_per_ip.max, 4);
+        assert!(
+            config
+                .admin_user_ids
+                .contains(&UserId::from_uuid(Uuid::from_u128(1)))
+        );
         assert_eq!(
             config.allowed_origins,
             ["http://localhost:5173", "https://a.test"]
+        );
+    }
+
+    #[test]
+    fn administrator_ids_must_be_uuids() {
+        assert_eq!(
+            with(&[("RUSTCHAT_ADMIN_USER_IDS", "not-a-uuid")]).unwrap_err(),
+            ConfigError::InvalidAdminUserIds
         );
     }
 
@@ -286,6 +475,46 @@ mod tests {
         assert_eq!(no_origins.unwrap_err(), ConfigError::MissingAllowedOrigins);
         let blank = with(&[("RUSTCHAT_ALLOWED_ORIGINS", " , ")]);
         assert_eq!(blank.unwrap_err(), ConfigError::MissingAllowedOrigins);
+    }
+
+    #[test]
+    fn group_member_limit_is_bounded() {
+        for value in ["1", "501", "many"] {
+            assert_eq!(
+                with(&[("RUSTCHAT_GROUP_MEMBER_LIMIT", value)]).unwrap_err(),
+                ConfigError::InvalidGroupMemberLimit
+            );
+        }
+        assert_eq!(
+            with(&[("RUSTCHAT_GROUP_MEMBER_LIMIT", "2")])
+                .unwrap()
+                .group_member_limit,
+            2
+        );
+        assert_eq!(
+            with(&[("RUSTCHAT_GROUP_MEMBER_LIMIT", "500")])
+                .unwrap()
+                .group_member_limit,
+            500
+        );
+    }
+
+    #[test]
+    fn authentication_rate_limits_are_bounded() {
+        for value in ["0", "100001", "invalid"] {
+            assert_eq!(
+                with(&[("RUSTCHAT_LOGIN_PER_IP_LIMIT", value)]).unwrap_err(),
+                ConfigError::InvalidRateLimit
+            );
+        }
+        assert_eq!(
+            with(&[("RUSTCHAT_REGISTER_PER_IP_LIMIT", "1")])
+                .unwrap()
+                .rate_limits
+                .register_per_ip
+                .max,
+            1
+        );
     }
 
     #[test]
