@@ -198,6 +198,11 @@ impl IntoResponse for ApiError {
                     "MEMBER_LIMIT",
                     "The conversation member limit was reached.",
                 ),
+                AppError::InvalidConversationName(e) => body(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "VALIDATION_ERROR",
+                    e.to_string(),
+                ),
                 AppError::InvalidMessage(e) => body(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "VALIDATION_ERROR",

@@ -20,8 +20,15 @@ use crate::{
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CreateConversation {
-    Direct { username: String },
-    Group { usernames: Vec<String> },
+    Direct {
+        username: String,
+    },
+    Group {
+        usernames: Vec<String>,
+        /// Optional display name, 1-80 characters.
+        #[serde(default)]
+        name: Option<String>,
+    },
 }
 
 #[derive(Deserialize)]
@@ -40,6 +47,8 @@ pub struct ListQuery {
 pub struct ConversationDto {
     id: Uuid,
     kind: &'static str,
+    /// Group name; null for direct conversations and unnamed groups.
+    name: Option<String>,
     created_by: Uuid,
     #[serde(with = "time::serde::rfc3339")]
     created_at: time::OffsetDateTime,
@@ -54,6 +63,7 @@ impl From<Conversation> for ConversationDto {
                 ConversationKind::Direct => "direct",
                 ConversationKind::Group => "group",
             },
+            name: c.name.map(|name| name.as_str().to_owned()),
             created_by: c.created_by.as_uuid(),
             created_at: c.created_at,
             members: c.members.into_iter().map(|u| u.as_uuid()).collect(),
@@ -96,10 +106,10 @@ pub async fn create(
                 .create_direct(auth.user.id, &username)
                 .await?
         }
-        CreateConversation::Group { usernames } => {
+        CreateConversation::Group { usernames, name } => {
             state
                 .conversations
-                .create_group(auth.user.id, &usernames)
+                .create_group(auth.user.id, name.as_deref(), &usernames)
                 .await?
         }
     };

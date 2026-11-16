@@ -1522,6 +1522,91 @@ async fn direct_conversations_are_created_once_and_hidden_from_non_members(pool:
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
+async fn groups_can_be_named_when_created_and_the_name_is_validated(pool: PgPool) {
+    let app = app(pool);
+    for username in ["alice", "bobby", "carol"] {
+        register(&app, username).await;
+    }
+    let alice = login_cookie(&app, "alice").await;
+    let bobby = login_cookie(&app, "bobby").await;
+    let create = |body: Value| {
+        let app = &app;
+        let alice = &alice;
+        async move {
+            send(
+                app,
+                Call {
+                    method: Method::POST,
+                    uri: "/api/v1/conversations",
+                    body: Some(body),
+                    cookie: Some(alice),
+                    origin: Some(ORIGIN),
+                },
+            )
+            .await
+        }
+    };
+
+    let named =
+        create(json!({"type":"group","usernames":["bobby","carol"],"name":"  Weekend plans  "}))
+            .await;
+    assert_eq!(named.status, StatusCode::CREATED, "{:?}", named.json);
+    assert_eq!(
+        named.json["conversation"]["name"], "Weekend plans",
+        "names are trimmed"
+    );
+    let id = named.json["conversation"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    // Every member sees the name in the list and when fetching the conversation.
+    let listed = get(&app, "/api/v1/conversations", Some(&bobby)).await;
+    assert_eq!(listed.json["conversations"][0]["name"], "Weekend plans");
+    let fetched = get(&app, &format!("/api/v1/conversations/{id}"), Some(&bobby)).await;
+    assert_eq!(fetched.json["conversation"]["name"], "Weekend plans");
+
+    // Naming is optional, and a direct conversation has no name.
+    let unnamed = create(json!({"type":"group","usernames":["bobby","carol"]})).await;
+    assert_eq!(unnamed.status, StatusCode::CREATED);
+    assert!(unnamed.json["conversation"]["name"].is_null());
+    let direct = create(json!({"type":"direct","username":"bobby"})).await;
+    assert_eq!(direct.status, StatusCode::CREATED);
+    assert!(direct.json["conversation"]["name"].is_null());
+
+    // Invalid names are rejected before anything is created.
+    for invalid in [
+        json!(""),
+        json!("   "),
+        json!(
+            "two
+lines"
+        ),
+        json!("x".repeat(81)),
+        json!(7),
+    ] {
+        let rejected =
+            create(json!({"type":"group","usernames":["bobby","carol"],"name":invalid})).await;
+        assert!(
+            rejected.status == StatusCode::UNPROCESSABLE_ENTITY
+                || rejected.status == StatusCode::BAD_REQUEST,
+            "{invalid:?} gave {:?}",
+            rejected.status
+        );
+    }
+    let after = get(&app, "/api/v1/conversations", Some(&bobby)).await;
+    assert_eq!(
+        after.json["conversations"].as_array().unwrap().len(),
+        3,
+        "rejected requests created nothing"
+    );
+
+    // A name on a direct conversation is not accepted.
+    let direct_named = create(json!({"type":"direct","username":"carol","name":"Nope"})).await;
+    assert!(direct_named.status.is_client_error());
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
 async fn group_membership_is_scoped_and_respects_the_configured_cap(pool: PgPool) {
     let app = app_with_member_limit(pool, RegistrationPolicy::Open, 3);
     for username in ["alice", "bobby", "carol", "david"] {

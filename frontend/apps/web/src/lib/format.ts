@@ -4,7 +4,7 @@ import { shortId } from './ids'
 export const conversationShortcut = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ K' : 'Ctrl K'
 
 export function displayName(conversation: Conversation, currentUserId: string, profiles: Record<string, User> = {}): string {
-  if (conversation.kind === 'group') return `Group conversation · ${conversation.members.length}`
+  if (conversation.kind === 'group') return conversation.name || `Group conversation · ${conversation.members.length}`
   const peer = conversation.members.find((member) => member !== currentUserId)
   return peer ? profiles[peer]?.username ?? `Direct · ${shortId(peer)}` : 'Direct conversation'
 }

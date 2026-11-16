@@ -16,7 +16,7 @@ use rustchat_application::{
 };
 use rustchat_domain::{
     community::{Category, Channel, Community, Role},
-    conversation::{Conversation, ConversationKind, ConversationPage},
+    conversation::{Conversation, ConversationKind, ConversationName, ConversationPage},
     identity::{
         CategoryId, ChannelId, CommunityId, ConversationId, MessageId, ProfilePrivacy,
         ProfileVisibility, RoleId, Session, SessionId, User, UserId, UserProfile, Username,
@@ -1227,14 +1227,22 @@ async fn conversation_members(pool: &PgPool, id: Uuid) -> Result<Vec<UserId>, Ap
         .collect()
 }
 
+/// The stored name, if any. A CHECK constraint keeps stored names valid, so one that
+/// no longer parses is treated as unset instead of failing the whole read.
+fn conversation_name(row: &PgRow) -> Result<Option<ConversationName>, AppError> {
+    let stored: Option<String> = row.try_get("name").map_err(db_error)?;
+    Ok(stored.and_then(|value| ConversationName::parse(&value).ok()))
+}
+
 async fn conversation_by_id(pool: &PgPool, id: Uuid) -> Result<Conversation, AppError> {
-    let row =
-        sqlx::query("SELECT id, kind, created_by, created_at FROM conversations WHERE id = $1")
-            .bind(id)
-            .fetch_optional(pool)
-            .await
-            .map_err(db_error)?
-            .ok_or(AppError::NotFound)?;
+    let row = sqlx::query(
+        "SELECT id, kind, name, created_by, created_at FROM conversations WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(db_error)?
+    .ok_or(AppError::NotFound)?;
     let kind: String = row.try_get("kind").map_err(db_error)?;
     let conversation = Conversation {
         id: ConversationId::from_uuid(row.try_get("id").map_err(db_error)?),
@@ -1243,6 +1251,7 @@ async fn conversation_by_id(pool: &PgPool, id: Uuid) -> Result<Conversation, App
         } else {
             ConversationKind::Group
         },
+        name: conversation_name(&row)?,
         created_by: UserId::from_uuid(row.try_get("created_by").map_err(db_error)?),
         created_at: row.try_get("created_at").map_err(db_error)?,
         members: conversation_members(pool, id).await?,
@@ -1285,6 +1294,7 @@ impl ConversationRepository for PgConversationRepository {
     async fn create_group(
         &self,
         creator: UserId,
+        name: Option<ConversationName>,
         members: Vec<UserId>,
         max_members: usize,
     ) -> Result<Conversation, AppError> {
@@ -1294,8 +1304,8 @@ impl ConversationRepository for PgConversationRepository {
         let id = Uuid::now_v7();
         let now = OffsetDateTime::now_utc();
         let mut tx = self.pool.begin().await.map_err(db_error)?;
-        sqlx::query("INSERT INTO conversations (id, kind, created_by, created_at) VALUES ($1, 'group', $2, $3)")
-            .bind(id).bind(creator.as_uuid()).bind(now).execute(&mut *tx).await.map_err(db_error)?;
+        sqlx::query("INSERT INTO conversations (id, kind, name, created_by, created_at) VALUES ($1, 'group', $2, $3, $4)")
+            .bind(id).bind(name.as_ref().map(ConversationName::as_str)).bind(creator.as_uuid()).bind(now).execute(&mut *tx).await.map_err(db_error)?;
         for member in members {
             sqlx::query("INSERT INTO conversation_members (conversation_id, user_id, joined_at) VALUES ($1, $2, $3)")
                 .bind(id).bind(member.as_uuid()).bind(now).execute(&mut *tx).await.map_err(db_error)?;
@@ -1389,7 +1399,7 @@ impl ConversationRepository for PgConversationRepository {
         limit: usize,
     ) -> Result<ConversationPage, AppError> {
         let take = i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX);
-        let rows = sqlx::query("WITH page AS (SELECT c.id, c.kind, c.created_by, c.created_at FROM conversations c JOIN conversation_members cm ON cm.conversation_id = c.id AND cm.user_id = $1 WHERE NOT EXISTS (SELECT 1 FROM community_channels ch WHERE ch.conversation_id = c.id) AND ($2::uuid IS NULL OR (c.created_at, c.id) < (SELECT created_at, id FROM conversations WHERE id = $2)) ORDER BY c.created_at DESC, c.id DESC LIMIT $3) SELECT p.id, p.kind, p.created_by, p.created_at, cm.user_id FROM page p JOIN conversation_members cm ON cm.conversation_id = p.id ORDER BY p.created_at DESC, p.id DESC, cm.user_id")
+        let rows = sqlx::query("WITH page AS (SELECT c.id, c.kind, c.name, c.created_by, c.created_at FROM conversations c JOIN conversation_members cm ON cm.conversation_id = c.id AND cm.user_id = $1 WHERE NOT EXISTS (SELECT 1 FROM community_channels ch WHERE ch.conversation_id = c.id) AND ($2::uuid IS NULL OR (c.created_at, c.id) < (SELECT created_at, id FROM conversations WHERE id = $2)) ORDER BY c.created_at DESC, c.id DESC LIMIT $3) SELECT p.id, p.kind, p.name, p.created_by, p.created_at, cm.user_id FROM page p JOIN conversation_members cm ON cm.conversation_id = p.id ORDER BY p.created_at DESC, p.id DESC, cm.user_id")
             .bind(caller.as_uuid()).bind(before.map(|id| id.as_uuid())).bind(take).fetch_all(&self.pool).await.map_err(db_error)?;
         let mut conversations: Vec<Conversation> = Vec::new();
         for row in rows {
@@ -1406,6 +1416,7 @@ impl ConversationRepository for PgConversationRepository {
                     } else {
                         ConversationKind::Group
                     },
+                    name: conversation_name(&row)?,
                     created_by: UserId::from_uuid(row.try_get("created_by").map_err(db_error)?),
                     created_at: row.try_get("created_at").map_err(db_error)?,
                     members: Vec::new(),
@@ -1437,7 +1448,7 @@ impl ConversationRepository for PgConversationRepository {
         caller: UserId,
         conversation: ConversationId,
     ) -> Result<Conversation, AppError> {
-        let row = sqlx::query("SELECT c.id, c.kind, c.created_by, c.created_at, array_agg(all_members.user_id ORDER BY all_members.user_id) AS members FROM conversations c JOIN conversation_members caller_members ON caller_members.conversation_id = c.id AND caller_members.user_id = $2 JOIN conversation_members all_members ON all_members.conversation_id = c.id WHERE c.id = $1 AND NOT EXISTS (SELECT 1 FROM community_channels ch WHERE ch.conversation_id = c.id AND NOT channel_has_permission($2, ch.id, 129)) GROUP BY c.id")
+        let row = sqlx::query("SELECT c.id, c.kind, c.name, c.created_by, c.created_at, array_agg(all_members.user_id ORDER BY all_members.user_id) AS members FROM conversations c JOIN conversation_members caller_members ON caller_members.conversation_id = c.id AND caller_members.user_id = $2 JOIN conversation_members all_members ON all_members.conversation_id = c.id WHERE c.id = $1 AND NOT EXISTS (SELECT 1 FROM community_channels ch WHERE ch.conversation_id = c.id AND NOT channel_has_permission($2, ch.id, 129)) GROUP BY c.id")
             .bind(conversation.as_uuid()).bind(caller.as_uuid()).fetch_optional(&self.pool).await.map_err(db_error)?.ok_or(AppError::NotFound)?;
         let kind: String = row.try_get("kind").map_err(db_error)?;
         let members: Vec<Uuid> = row.try_get("members").map_err(db_error)?;
@@ -1448,6 +1459,7 @@ impl ConversationRepository for PgConversationRepository {
             } else {
                 ConversationKind::Group
             },
+            name: conversation_name(&row)?,
             created_by: UserId::from_uuid(row.try_get("created_by").map_err(db_error)?),
             created_at: row.try_get("created_at").map_err(db_error)?,
             members: members.into_iter().map(UserId::from_uuid).collect(),

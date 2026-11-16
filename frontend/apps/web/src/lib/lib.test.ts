@@ -34,5 +34,7 @@ describe('displayName', () => {
 
   it('labels groups with their size', () => {
     expect(displayName({ ...direct, kind: 'group', members: ['me', 'a', 'b'] }, 'me')).toBe('Group conversation · 3')
+    expect(displayName({ ...direct, kind: 'group', name: 'Weekend plans', members: ['me', 'a', 'b'] }, 'me')).toBe('Weekend plans')
+    expect(displayName({ ...direct, kind: 'group', name: '', members: ['me', 'a', 'b'] }, 'me')).toBe('Group conversation · 3')
   })
 })

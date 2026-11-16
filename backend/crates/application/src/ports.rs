@@ -5,7 +5,7 @@
 use async_trait::async_trait;
 use rustchat_domain::{
     community::{Category, Channel, Community, Role},
-    conversation::{Conversation, ConversationPage},
+    conversation::{Conversation, ConversationName, ConversationPage},
     identity::{
         CategoryId, ChannelId, CommunityId, ConversationId, EmailAddress, MessageId, PlainPassword,
         ProfilePrivacy, RoleId, Session, SessionId, User, UserId, UserProfile, Username,
@@ -318,6 +318,7 @@ pub trait ConversationRepository: Send + Sync {
     async fn create_group(
         &self,
         creator: UserId,
+        name: Option<ConversationName>,
         members: Vec<UserId>,
         max_members: usize,
     ) -> Result<Conversation, AppError>;

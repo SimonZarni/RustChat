@@ -1,4 +1,5 @@
 use rustchat_domain::{
+    conversation::ConversationNameError,
     identity::{EmailAddressError, PasswordError, UsernameError},
     message::{MessageContentError, ReactionEmojiError},
 };
@@ -57,6 +58,8 @@ pub enum AppError {
     InvalidConversationRequest,
     #[error("conversation member limit reached")]
     ConversationMemberLimit,
+    #[error("invalid group name: {0}")]
+    InvalidConversationName(#[from] ConversationNameError),
     #[error("invalid message: {0}")]
     InvalidMessage(#[from] MessageContentError),
     #[error("invalid reaction: {0}")]

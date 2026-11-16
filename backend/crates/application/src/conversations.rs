@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use rustchat_domain::{
-    conversation::{Conversation, ConversationPage},
+    conversation::{Conversation, ConversationName, ConversationPage},
     identity::{ConversationId, UserId, Username},
 };
 
@@ -59,8 +59,10 @@ impl ConversationService {
     pub async fn create_group(
         &self,
         caller: UserId,
+        name: Option<&str>,
         usernames: &[String],
     ) -> Result<Conversation, AppError> {
+        let name = name.map(ConversationName::parse).transpose()?;
         if usernames.is_empty() || usernames.len().saturating_add(1) > self.config.max_members {
             return Err(AppError::ConversationMemberLimit);
         }
@@ -78,7 +80,7 @@ impl ConversationService {
             members.push(user.id);
         }
         self.conversations
-            .create_group(caller, members, self.config.max_members)
+            .create_group(caller, name, members, self.config.max_members)
             .await
     }
 
@@ -350,6 +352,7 @@ mod tests {
             Ok(Conversation {
                 id: ConversationId::new(),
                 kind: ConversationKind::Direct,
+                name: None,
                 created_by: caller,
                 created_at: OffsetDateTime::UNIX_EPOCH,
                 members: vec![caller, target],
@@ -358,6 +361,7 @@ mod tests {
         async fn create_group(
             &self,
             _: UserId,
+            _: Option<ConversationName>,
             _: Vec<UserId>,
             _: usize,
         ) -> Result<Conversation, AppError> {
@@ -462,8 +466,40 @@ mod tests {
         );
         let caller = UserId::new();
         let too_many = service
-            .create_group(caller, &["bobby".into(), "carol".into()])
+            .create_group(caller, None, &["bobby".into(), "carol".into()])
             .await;
         assert!(matches!(too_many, Err(AppError::ConversationMemberLimit)));
+    }
+
+    #[tokio::test]
+    async fn group_names_are_validated_before_any_lookup() {
+        let service = ConversationService::new(
+            Arc::new(Users::default()),
+            Arc::new(Conversations::default()),
+            ConversationConfig {
+                max_members: 10,
+                max_page_size: 100,
+            },
+        );
+        let caller = UserId::new();
+        let members = ["bobby".to_string()];
+        for invalid in [
+            "",
+            "   ",
+            "line
+break",
+            &"x".repeat(81),
+        ] {
+            let result = service.create_group(caller, Some(invalid), &members).await;
+            assert!(
+                matches!(result, Err(AppError::InvalidConversationName(_))),
+                "{invalid:?} should be rejected"
+            );
+        }
+        // A valid name passes validation and reaches the member lookup instead.
+        let result = service
+            .create_group(caller, Some("  Weekend  "), &members)
+            .await;
+        assert!(matches!(result, Err(AppError::NotFound)));
     }
 }

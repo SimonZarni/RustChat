@@ -2,7 +2,7 @@ export type User = { id: string; username: string; created_at: string }
 export type UserProfile = { id: string; username: string; display_name: string; bio: string; updated_at: string }
 export type Session = { id: string; created_at: string; expires_at: string; current: boolean }
 export type ProfilePrivacy = { discoverable: boolean; profile_visibility: 'everyone' | 'conversation_members'; presence_visible: boolean }
-export type Conversation = { id: string; kind: 'direct' | 'group'; created_by: string; created_at: string; members: string[] }
+export type Conversation = { id: string; kind: 'direct' | 'group'; name?: string | null; created_by: string; created_at: string; members: string[] }
 export type Message = {
   id: string
   conversation_id: string

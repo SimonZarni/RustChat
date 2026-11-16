@@ -12,6 +12,7 @@ type Props = {
 export function NewConversationDialog({ onClose, onError, onCreated }: Props) {
   const [kind, setKind] = useState<'direct' | 'group'>('direct')
   const [participants, setParticipants] = useState('')
+  const [groupName, setGroupName] = useState('')
   const [creating, setCreating] = useState(false)
   const [preview, setPreview] = useState<UserProfile | null>(null)
   const [previewError, setPreviewError] = useState('')
@@ -21,7 +22,8 @@ export function NewConversationDialog({ onClose, onError, onCreated }: Props) {
     event.preventDefault(); setCreating(true); onError('')
     const names = participants.split(/[\s,]+/).map((name) => name.trim()).filter(Boolean)
     try {
-      const body = kind === 'direct' ? { type: 'direct', username: names[0] } : { type: 'group', usernames: names }
+      const name = groupName.trim()
+      const body = kind === 'direct' ? { type: 'direct', username: names[0] } : { type: 'group', usernames: names, ...(name ? { name } : {}) }
       const result = await api<{ conversation: Conversation }>('/api/v1/conversations', { method: 'POST', body: JSON.stringify(body) })
       onCreated(result.conversation)
       onClose()
@@ -54,9 +56,14 @@ export function NewConversationDialog({ onClose, onError, onCreated }: Props) {
         <button className={kind === 'group' ? 'active' : ''} onClick={() => setKind('group')}>Group</button>
       </div>
       <form className="stack-form" onSubmit={create}>
+        {kind === 'group' && (
+          <label>Group name (optional)
+            <input autoFocus maxLength={80} value={groupName} placeholder="e.g. Weekend plans" onChange={(event) => setGroupName(event.target.value)} />
+          </label>
+        )}
         <label>{kind === 'direct' ? 'Username' : 'Usernames'}
           <input
-            autoFocus required value={participants} placeholder={kind === 'direct' ? 'e.g. riverstone' : 'Separate usernames with commas'}
+            autoFocus={kind === 'direct'} required value={participants} placeholder={kind === 'direct' ? 'e.g. riverstone' : 'Separate usernames with commas'}
             onChange={(event) => { setParticipants(event.target.value); setPreview(null); setPreviewError('') }}
           />
         </label>

@@ -115,14 +115,14 @@ All routes require the session cookie. Mutating routes also require an allowed `
 
 | Method and path | Success | Notes |
 |---|---|---|
-| `POST /api/v1/conversations` | `201 {"conversation": {...}}` | Body is `{"type":"direct","username":"bobby"}` or `{"type":"group","usernames":["bobby","carol"]}`. Group creator is included automatically. Repeated direct creation returns the same conversation |
+| `POST /api/v1/conversations` | `201 {"conversation": {...}}` | Body is `{"type":"direct","username":"bobby"}` or `{"type":"group","usernames":["bobby","carol"],"name":"Weekend plans"}`; `name` is optional and groups only (trimmed, 1-80 characters, no control characters; invalid names return `422`). Group creator is included automatically. Repeated direct creation returns the same conversation |
 | `GET /api/v1/conversations?before={id}&limit=50` | `200 {"conversations":[...],"next_cursor":...}` | Caller’s conversations only; default limit 50, maximum 100 |
 | `GET /api/v1/conversations/{id}` | `200 {"conversation": {...}}` | Non-members and unknown IDs both receive `404` |
 | `GET /api/v1/conversations/{id}/members` | `200 {"members":[{"id","username","created_at"}]}` | Profile details are returned only to current conversation members; unknown conversations and non-members both receive `404` |
 | `POST /api/v1/conversations/{id}/members` | `204` | Body `{"username":"david"}`. Existing members can add members to groups |
 | `DELETE /api/v1/conversations/{id}/members/{user_id}` | `204` | Existing group members can remove any group member, including themselves. Direct membership is fixed |
 
-`conversation` contains `{id, kind, created_by, created_at, members}`. `kind` is `direct` or `group`; timestamps are RFC 3339 UTC. Exact username matching follows the existing case-insensitive username rules. Unknown usernames return `404`. The group member cap defaults to 100 including the creator, is configured by `RUSTCHAT_GROUP_MEMBER_LIMIT`, and accepts values 2–500. Adding a current member is idempotent. Rejected group sizes return `422 MEMBER_LIMIT`; invalid group operations return `422 INVALID_CONVERSATION`.
+`conversation` contains `{id, kind, name, created_by, created_at, members}`; `name` is `null` for direct conversations and unnamed groups. `kind` is `direct` or `group`; timestamps are RFC 3339 UTC. Exact username matching follows the existing case-insensitive username rules. Unknown usernames return `404`. The group member cap defaults to 100 including the creator, is configured by `RUSTCHAT_GROUP_MEMBER_LIMIT`, and accepts values 2–500. Adding a current member is idempotent. Rejected group sizes return `422 MEMBER_LIMIT`; invalid group operations return `422 INVALID_CONVERSATION`.
 
 Every read and membership mutation is scoped to caller membership in the database. Any group member can manage group membership. Community channel operations additionally enforce role permissions. Conversation list cursors use the last conversation ID from the prior page; ordering is `(created_at, id)` descending.
 
