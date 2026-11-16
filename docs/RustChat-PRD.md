@@ -1125,21 +1125,36 @@ implementation.
     [ADR 0006](adr/0006-in-process-rate-limiting-behind-a-port.md) and
     [ADR 0011](adr/0011-postgresql-shared-auth-rate-limits.md).
 
+-   **Supported PostgreSQL versions (decided 2026-11-16):** the two newest
+    major versions (currently 17 and 18), with CI running against both.
+    Supporting 17 requires adding it to the CI test matrix and confirming
+    the suite passes on it (it is only tested on 18 today).
+-   **E2EE protocol (decided 2026-11-16):** run a time-boxed security spike
+    comparing MLS (RFC 9420, for example via OpenMLS) with a Signal-style
+    double-ratchet design before choosing. Nothing is described as
+    end-to-end encrypted until the full key lifecycle, threat model and an
+    external review exist.
+-   **Minimum server sizing (decided 2026-11-16):** treat 2 vCPU, 4 GiB RAM
+    and 40 GB SSD as a working hypothesis for a small community and publish
+    figures only after a k6 baseline measures them.
+
 ### Remaining decisions
 
--   Supported PostgreSQL version range; PostgreSQL 18 is used in development
-    and integration tests. Valkey is currently unused by the application.
--   Exact attachment size and storage quota defaults.
--   Initial community discovery policy.
--   Supported desktop operating systems for the first desktop release.
--   E2EE protocol/library selection after a focused security evaluation.
--   Operational minimum server sizing after baseline load tests.
+-   Supported desktop operating systems for the first desktop release
+    (recommendation below; awaiting the product owner).
+-   Exact attachment size and storage quota defaults. **Deferred to Phase 2**,
+    when object storage is built.
+-   Initial community discovery policy. **Deferred to Phase 2.** Until then
+    communities are invite-only, as implemented.
 
-### Proposed resolutions (awaiting approval)
+### Proposed resolutions
 
-These are recommendations for the product owner, not approved decisions.
-Nothing below changes the implementation until it is accepted and, where
-it is architectural, recorded in an ADR.
+The first table rows below were accepted on 2026-11-16 (PostgreSQL versions,
+E2EE evaluation, server sizing) and are recorded above. Attachment limits
+and community discovery are deferred to Phase 2. The desktop operating
+system row is still a recommendation awaiting approval. Nothing here
+changes the implementation until it is accepted and, where it is
+architectural, recorded in an ADR.
 
 | Decision | Recommendation | Reasoning and what would change it |
 |---|---|---|
