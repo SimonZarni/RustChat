@@ -9,6 +9,7 @@ use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use rustchat_application::{
     auth::{AuthContext, LoginResult},
     error::AppError,
+    ratelimit::ApiOperation,
 };
 use rustchat_domain::identity::{
     ProfilePrivacy, ProfileVisibility, Session, SessionId, User, UserProfile,
@@ -35,11 +36,35 @@ impl FromRequestParts<AppState> for AuthUser {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let jar = CookieJar::from_headers(&parts.headers);
-        let token = jar
-            .get(state.config.cookie_name())
-            .map(|cookie| cookie.value().to_owned())
-            .ok_or(AppError::Unauthenticated)?;
-        let request = state.auth.authenticate_request(&token).await?;
+        let authenticated = match jar.get(state.config.cookie_name()) {
+            Some(cookie) => {
+                let token = cookie.value().to_owned();
+                state.auth.authenticate_request(&token).await
+            }
+            None => Err(AppError::Unauthenticated),
+        };
+        let request = match authenticated {
+            Ok(request) => request,
+            Err(AppError::Unauthenticated) => {
+                // Requests that fail authentication spend a per-network budget, so a flood
+                // of them is cut off instead of being answered indefinitely.
+                if let Some(limits) = &state.api_limits {
+                    let ClientIp(ip) = ClientIp::from_request_parts(parts, state).await?;
+                    limits.enforce_unauthenticated(ip).await?;
+                }
+                return Err(AppError::Unauthenticated.into());
+            }
+            Err(other) => return Err(other.into()),
+        };
+        if let Some(limits) = &state.api_limits {
+            let route = parts
+                .extensions
+                .get::<axum::extract::MatchedPath>()
+                .map_or("", |path| path.as_str());
+            limits
+                .enforce_user(request.context.user.id, classify(&parts.method, route))
+                .await?;
+        }
         if let (Some(rotated), Some(slot)) = (
             request.rotated_token,
             parts.extensions.get::<RotationSlot>(),
@@ -51,6 +76,32 @@ impl FromRequestParts<AppState> for AuthUser {
         }
         Ok(Self(request.context))
     }
+}
+
+/// Maps a request to its rate-limit class from the HTTP method and the matched
+/// route pattern (never the raw path, which contains identifiers).
+fn classify(method: &axum::http::Method, route: &str) -> ApiOperation {
+    use axum::http::Method;
+    if matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS) {
+        return ApiOperation::Read;
+    }
+    if *method == Method::POST {
+        if route.ends_with("/messages") {
+            return ApiOperation::SendMessage;
+        }
+        const CREATES: [&str; 6] = [
+            "/conversations",
+            "/communities",
+            "/channels",
+            "/categories",
+            "/roles",
+            "/invites",
+        ];
+        if CREATES.iter().any(|suffix| route.ends_with(suffix)) {
+            return ApiOperation::Create;
+        }
+    }
+    ApiOperation::Write
 }
 
 /// Carries a rotated session token from the extractor to the response layer.

@@ -3,7 +3,10 @@
 use std::{collections::HashSet, fmt, net::SocketAddr, num::NonZeroUsize};
 
 use rustchat_application::auth::RegistrationPolicy;
-use rustchat_application::{ports::RateLimitRule, ratelimit::RateLimitConfig};
+use rustchat_application::{
+    ports::RateLimitRule,
+    ratelimit::{ApiRateLimitConfig, RateLimitConfig},
+};
 use rustchat_domain::identity::UserId;
 use rustchat_http::ClientIpSource;
 use uuid::Uuid;
@@ -95,6 +98,8 @@ pub struct Config {
     /// Sessions end after this long without activity (and at the 30-day absolute limit).
     pub session_idle_timeout: time::Duration,
     pub rate_limits: RateLimitConfig,
+    /// Per-user budgets for general API traffic (per server process).
+    pub api_rate_limits: ApiRateLimitConfig,
     pub email: Option<EmailConfig>,
 }
 
@@ -222,6 +227,27 @@ impl Config {
             },
         };
 
+        let default_api = ApiRateLimitConfig::default();
+        let api_rule = |key: &str, default: RateLimitRule| -> Result<RateLimitRule, ConfigError> {
+            Ok(RateLimitRule {
+                max: rate_limit(key, default.max)?,
+                window: default.window,
+            })
+        };
+        let api_rate_limits = ApiRateLimitConfig {
+            reads_per_user: api_rule("RUSTCHAT_API_READ_LIMIT", default_api.reads_per_user)?,
+            writes_per_user: api_rule("RUSTCHAT_API_WRITE_LIMIT", default_api.writes_per_user)?,
+            messages_per_user: api_rule(
+                "RUSTCHAT_MESSAGE_SEND_LIMIT",
+                default_api.messages_per_user,
+            )?,
+            creations_per_user: api_rule("RUSTCHAT_CREATE_LIMIT", default_api.creations_per_user)?,
+            unauthenticated_per_ip: api_rule(
+                "RUSTCHAT_UNAUTHENTICATED_LIMIT",
+                default_api.unauthenticated_per_ip,
+            )?,
+        };
+
         let allowed_origins: Vec<String> = lookup("RUSTCHAT_ALLOWED_ORIGINS")
             .unwrap_or_default()
             .split(',')
@@ -299,6 +325,7 @@ impl Config {
             group_member_limit,
             session_idle_timeout,
             rate_limits,
+            api_rate_limits,
             email,
         })
     }
@@ -492,6 +519,46 @@ mod tests {
         assert_eq!(no_origins.unwrap_err(), ConfigError::MissingAllowedOrigins);
         let blank = with(&[("RUSTCHAT_ALLOWED_ORIGINS", " , ")]);
         assert_eq!(blank.unwrap_err(), ConfigError::MissingAllowedOrigins);
+    }
+
+    #[test]
+    fn api_rate_limits_default_and_are_configurable_within_bounds() {
+        let defaults = with(&[]).unwrap().api_rate_limits;
+        assert_eq!(defaults, ApiRateLimitConfig::default());
+        let tuned = with(&[
+            ("RUSTCHAT_API_READ_LIMIT", "900"),
+            ("RUSTCHAT_API_WRITE_LIMIT", "200"),
+            ("RUSTCHAT_MESSAGE_SEND_LIMIT", "90"),
+            ("RUSTCHAT_CREATE_LIMIT", "50"),
+            ("RUSTCHAT_UNAUTHENTICATED_LIMIT", "10"),
+        ])
+        .unwrap()
+        .api_rate_limits;
+        assert_eq!(tuned.reads_per_user.max, 900);
+        assert_eq!(tuned.writes_per_user.max, 200);
+        assert_eq!(tuned.messages_per_user.max, 90);
+        assert_eq!(tuned.creations_per_user.max, 50);
+        assert_eq!(tuned.unauthenticated_per_ip.max, 10);
+        // Windows are fixed, as for the authentication limits.
+        assert_eq!(
+            tuned.messages_per_user.window,
+            defaults.messages_per_user.window
+        );
+        for key in [
+            "RUSTCHAT_API_READ_LIMIT",
+            "RUSTCHAT_API_WRITE_LIMIT",
+            "RUSTCHAT_MESSAGE_SEND_LIMIT",
+            "RUSTCHAT_CREATE_LIMIT",
+            "RUSTCHAT_UNAUTHENTICATED_LIMIT",
+        ] {
+            for value in ["0", "100001", "lots"] {
+                assert_eq!(
+                    with(&[(key, value)]).unwrap_err(),
+                    ConfigError::InvalidRateLimit,
+                    "{key}={value}"
+                );
+            }
+        }
     }
 
     #[test]

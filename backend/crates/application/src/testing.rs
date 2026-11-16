@@ -532,6 +532,10 @@ impl TokenService for FakeTokens {
 pub struct FakeClock(Mutex<OffsetDateTime>);
 
 impl FakeClock {
+    pub fn new(start: OffsetDateTime) -> Self {
+        Self(Mutex::new(start))
+    }
+
     pub fn advance(&self, by: Duration) {
         *self.0.lock().unwrap() += by;
     }

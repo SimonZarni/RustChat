@@ -70,6 +70,7 @@ impl HttpConfig {
 #[derive(Clone)]
 pub struct AppState {
     pub(crate) auth: Arc<AuthService>,
+    pub(crate) api_limits: Option<Arc<rustchat_application::ratelimit::ApiRateLimiter>>,
     pub(crate) conversations: Arc<rustchat_application::conversations::ConversationService>,
     pub(crate) messages: Arc<MessageService>,
     pub(crate) communities: Arc<rustchat_application::communities::CommunityService>,
@@ -108,6 +109,7 @@ impl AppState {
     ) -> Self {
         Self {
             auth,
+            api_limits: None,
             conversations,
             messages,
             communities,
@@ -123,6 +125,15 @@ impl AppState {
             readiness_probe: Arc::new(|| Box::pin(async { true })),
             metrics: Arc::new(HttpMetrics::default()),
         }
+    }
+
+    /// Enforce per-user and unauthenticated request budgets on authenticated routes.
+    pub fn with_api_rate_limiter(
+        mut self,
+        limiter: Arc<rustchat_application::ratelimit::ApiRateLimiter>,
+    ) -> Self {
+        self.api_limits = Some(limiter);
+        self
     }
 
     pub fn with_readiness_probe<F, Fut>(mut self, probe: F) -> Self

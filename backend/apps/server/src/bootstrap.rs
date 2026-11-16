@@ -9,6 +9,7 @@ use rustchat_application::{
     error::AppError,
     messages::{MessageConfig, MessageService},
     ports::OutboxRepository,
+    ratelimit::ApiRateLimiter,
 };
 use rustchat_http::{AppEvents, AppState, HttpConfig, router};
 use rustchat_infrastructure::{
@@ -16,7 +17,7 @@ use rustchat_infrastructure::{
         self, PgCommunityRepository, PgConversationRepository, PgMessageRepository,
         PgOutboxRepository, PgSessionRepository, PgUserRepository,
     },
-    ratelimit::PgRateLimiter,
+    ratelimit::{InMemoryRateLimiter, PgRateLimiter},
     security::{Argon2Hasher, OsTokenService, SystemClock},
 };
 use tokio::net::TcpListener;
@@ -121,6 +122,13 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
             client_ip: config.client_ip,
         },
     )
+    // General API budgets are per server process (in memory, bounded); the stricter
+    // authentication limits above are shared through PostgreSQL.
+    .with_api_rate_limiter(Arc::new(ApiRateLimiter::new(
+        Arc::new(InMemoryRateLimiter::new()),
+        Arc::new(SystemClock),
+        config.api_rate_limits,
+    )))
     .with_readiness_probe({
         let pool = pool.clone();
         move || {

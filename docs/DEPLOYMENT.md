@@ -22,6 +22,7 @@ The Compose stack builds the Rust API and web client, serves HTTPS through Caddy
 | `RUSTCHAT_GROUP_MEMBER_LIMIT` | `100` | Group conversation cap, 2–500 |
 | `RUSTCHAT_SESSION_IDLE_TIMEOUT_DAYS` | `7` | Days of inactivity after which a session ends, 1–30 (the absolute lifetime is 30 days) |
 | `RUSTCHAT_LOGIN_PER_IP_LIMIT`, `RUSTCHAT_LOGIN_PER_USERNAME_LIMIT`, `RUSTCHAT_REGISTER_PER_IP_LIMIT` | `30`, `10`, `5` | Authentication rate-limit thresholds (windows are fixed) |
+| `RUSTCHAT_API_READ_LIMIT`, `RUSTCHAT_API_WRITE_LIMIT`, `RUSTCHAT_MESSAGE_SEND_LIMIT`, `RUSTCHAT_CREATE_LIMIT`, `RUSTCHAT_UNAUTHENTICATED_LIMIT` | `600`, `120`, `60`, `30`, `120` | General API budgets: reads, other writes and message sends per user per minute, creations per user per hour, and failed-authentication requests per client network per minute. Counted in each server process's memory, so they apply per instance |
 | `RUSTCHAT_ADMIN_USER_IDS` | empty | Instance administrator account UUIDs (see below) |
 | `RUSTCHAT_SERVER_IMAGE`, `RUSTCHAT_WEB_IMAGE` | local build tags | Release image tags |
 

@@ -17,7 +17,7 @@ use rustchat_application::{
     conversations::{ConversationConfig, ConversationService},
     messages::{MessageConfig, MessageService},
     ports::RateLimitRule,
-    ratelimit::RateLimitConfig,
+    ratelimit::{ApiRateLimitConfig, ApiRateLimiter, RateLimitConfig},
 };
 use rustchat_http::{AppEvents, AppState, ClientIpSource, HttpConfig, router};
 use rustchat_infrastructure::{
@@ -37,6 +37,8 @@ pub const PASSWORD: &str = "correct horse battery";
 pub const PEER: &str = "203.0.113.10:5000";
 
 pub struct Options {
+    /// Enforce general API budgets with these limits when set.
+    pub api_limits: Option<ApiRateLimitConfig>,
     pub lifecycle: SessionLifecycle,
     pub rate_limits: RateLimitConfig,
     pub client_ip: ClientIpSource,
@@ -49,6 +51,7 @@ impl Default for Options {
             window: time::Duration::hours(1),
         };
         Self {
+            api_limits: None,
             lifecycle: SessionLifecycle::default(),
             rate_limits: RateLimitConfig {
                 login_per_ip: generous,
@@ -97,7 +100,7 @@ pub fn app(pool: PgPool, options: Options) -> Router {
             max_invite_ttl: time::Duration::days(30),
         },
     );
-    router(AppState::new(
+    let mut state = AppState::new(
         Arc::new(auth),
         Arc::new(conversations),
         Arc::new(messages),
@@ -117,7 +120,15 @@ pub fn app(pool: PgPool, options: Options) -> Router {
             session_ttl,
             client_ip: options.client_ip,
         },
-    ))
+    );
+    if let Some(limits) = options.api_limits {
+        state = state.with_api_rate_limiter(Arc::new(ApiRateLimiter::new(
+            Arc::new(InMemoryRateLimiter::new()),
+            Arc::new(SystemClock),
+            limits,
+        )));
+    }
+    router(state)
 }
 
 pub struct Reply {

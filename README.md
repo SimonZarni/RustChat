@@ -134,6 +134,11 @@ cargo run -p rustchat-server             # serves on 127.0.0.1:8080
 | `RUSTCHAT_LOGIN_PER_IP_LIMIT` | no | `30` | Login attempts of any outcome per network per 15 minutes |
 | `RUSTCHAT_LOGIN_PER_USERNAME_LIMIT` | no | `10` | Failed login attempts per username per 15 minutes |
 | `RUSTCHAT_REGISTER_PER_IP_LIMIT` | no | `5` | Registration attempts per network per hour |
+| `RUSTCHAT_API_READ_LIMIT` | no | `600` | Authenticated read requests per user per minute (1–100000; per server process) |
+| `RUSTCHAT_API_WRITE_LIMIT` | no | `120` | Other authenticated write requests per user per minute |
+| `RUSTCHAT_MESSAGE_SEND_LIMIT` | no | `60` | Messages sent per user per minute |
+| `RUSTCHAT_CREATE_LIMIT` | no | `30` | Conversations, communities, channels, categories, roles and invites created per user per hour |
+| `RUSTCHAT_UNAUTHENTICATED_LIMIT` | no | `120` | Requests that fail authentication per client network per minute |
 | `RUSTCHAT_SMTP_HOST`, `RUSTCHAT_EMAIL_FROM`, `RUSTCHAT_PUBLIC_URL` | no | unset | Configure together to enable password recovery email; see [deployment configuration](docs/DEPLOYMENT.md) |
 | `RUSTCHAT_SMTP_PORT` | no | `465` | SMTP port when email delivery is configured |
 | `RUSTCHAT_SMTP_USERNAME`, `RUSTCHAT_SMTP_PASSWORD` | no | unset | Optional SMTP credentials; configure both or neither |

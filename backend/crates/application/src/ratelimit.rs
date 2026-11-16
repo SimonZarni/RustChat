@@ -1,10 +1,17 @@
-//! Rate-limit policy for authentication endpoints.
+//! Rate-limit policy: authentication endpoints and general API traffic.
 
-use std::net::{IpAddr, Ipv6Addr};
+use std::{
+    net::{IpAddr, Ipv6Addr},
+    sync::Arc,
+};
 
-use time::Duration;
+use rustchat_domain::identity::UserId;
+use time::{Duration, OffsetDateTime};
 
-use crate::ports::RateLimitRule;
+use crate::{
+    error::AppError,
+    ports::{Clock, RateLimitDecision, RateLimitRule, RateLimiter},
+};
 
 /// Longest username (in characters) used to build a limiter key. Longer
 /// inputs are truncated so key size, and therefore memory, stays bounded.
@@ -38,6 +45,123 @@ impl Default for RateLimitConfig {
                 max: 5,
                 window: Duration::hours(1),
             },
+        }
+    }
+}
+
+/// Classes of authenticated API traffic. Each class has its own per-user budget
+/// so a burst of one kind (for example reads while scrolling history) cannot
+/// starve another (sending messages).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ApiOperation {
+    /// `GET`, `HEAD` and `OPTIONS` requests.
+    Read,
+    /// State-changing requests not covered by a more specific class.
+    Write,
+    /// Sending a message.
+    SendMessage,
+    /// Creating a conversation, community, channel, category, role or invite.
+    Create,
+}
+
+impl ApiOperation {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Write => "write",
+            Self::SendMessage => "message",
+            Self::Create => "create",
+        }
+    }
+}
+
+/// Budgets for general API traffic. Authentication endpoints have their own
+/// stricter limits in [`RateLimitConfig`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ApiRateLimitConfig {
+    pub reads_per_user: RateLimitRule,
+    pub writes_per_user: RateLimitRule,
+    pub messages_per_user: RateLimitRule,
+    pub creations_per_user: RateLimitRule,
+    /// Requests per client network that fail authentication. Bounds floods of
+    /// unauthenticated requests; legitimate clients rarely send any.
+    pub unauthenticated_per_ip: RateLimitRule,
+}
+
+impl Default for ApiRateLimitConfig {
+    fn default() -> Self {
+        let per_minute = |max| RateLimitRule {
+            max,
+            window: Duration::minutes(1),
+        };
+        Self {
+            reads_per_user: per_minute(600),
+            writes_per_user: per_minute(120),
+            messages_per_user: per_minute(60),
+            creations_per_user: RateLimitRule {
+                max: 30,
+                window: Duration::hours(1),
+            },
+            unauthenticated_per_ip: per_minute(120),
+        }
+    }
+}
+
+/// Enforces [`ApiRateLimitConfig`] with a [`RateLimiter`]. Every counted
+/// request spends budget whether or not it later succeeds, so retry storms
+/// cannot bypass the limit.
+pub struct ApiRateLimiter {
+    limiter: Arc<dyn RateLimiter>,
+    clock: Arc<dyn Clock>,
+    config: ApiRateLimitConfig,
+}
+
+impl ApiRateLimiter {
+    pub fn new(
+        limiter: Arc<dyn RateLimiter>,
+        clock: Arc<dyn Clock>,
+        config: ApiRateLimitConfig,
+    ) -> Self {
+        Self {
+            limiter,
+            clock,
+            config,
+        }
+    }
+
+    /// Spend one request of `operation` for `user`, or fail with `RateLimited`.
+    pub async fn enforce_user(
+        &self,
+        user: UserId,
+        operation: ApiOperation,
+    ) -> Result<(), AppError> {
+        let rule = match operation {
+            ApiOperation::Read => self.config.reads_per_user,
+            ApiOperation::Write => self.config.writes_per_user,
+            ApiOperation::SendMessage => self.config.messages_per_user,
+            ApiOperation::Create => self.config.creations_per_user,
+        };
+        let key = format!("api:{}:{}", operation.label(), user.as_uuid());
+        self.spend(&key, rule).await
+    }
+
+    /// Spend one failed-authentication request for a client network.
+    pub async fn enforce_unauthenticated(&self, client_ip: IpAddr) -> Result<(), AppError> {
+        let key = format!("api:unauthenticated:{}", ip_bucket(client_ip));
+        self.spend(&key, self.config.unauthenticated_per_ip).await
+    }
+
+    async fn spend(&self, key: &str, rule: RateLimitRule) -> Result<(), AppError> {
+        let now: OffsetDateTime = self.clock.now();
+        match self.limiter.check(key, rule, now).await? {
+            RateLimitDecision::Allowed => self.limiter.record(key, rule, now).await,
+            RateLimitDecision::Limited { retry_after } => Err(AppError::RateLimited {
+                // Round up so a client that waits this long is not refused again.
+                retry_after_secs: u64::try_from(retry_after.whole_seconds())
+                    .unwrap_or(0)
+                    .saturating_add(u64::from(retry_after.subsec_nanoseconds() > 0))
+                    .max(1),
+            }),
         }
     }
 }
@@ -111,6 +235,83 @@ mod tests {
         assert_eq!(login_user_key("Alice"), login_user_key("aLiCe"));
         let long = login_user_key(&"x".repeat(10_000));
         assert!(long.len() < 100, "key must stay small: {}", long.len());
+    }
+
+    use crate::testing::{FakeClock, FakeLimiter};
+
+    fn api_limiter(config: ApiRateLimitConfig) -> (ApiRateLimiter, Arc<FakeClock>) {
+        let clock = Arc::new(FakeClock::new(OffsetDateTime::UNIX_EPOCH));
+        let limiter = ApiRateLimiter::new(Arc::new(FakeLimiter::default()), clock.clone(), config);
+        (limiter, clock)
+    }
+
+    fn tight(max: u32) -> ApiRateLimitConfig {
+        let rule = RateLimitRule {
+            max,
+            window: Duration::minutes(1),
+        };
+        ApiRateLimitConfig {
+            reads_per_user: rule,
+            writes_per_user: rule,
+            messages_per_user: rule,
+            creations_per_user: rule,
+            unauthenticated_per_ip: rule,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_class_budget_is_spent_per_user_and_does_not_affect_other_classes_or_users() {
+        let (limiter, _) = api_limiter(tight(2));
+        let (alice, bob) = (UserId::new(), UserId::new());
+
+        for _ in 0..2 {
+            limiter
+                .enforce_user(alice, ApiOperation::SendMessage)
+                .await
+                .unwrap();
+        }
+        assert!(matches!(
+            limiter.enforce_user(alice, ApiOperation::SendMessage).await,
+            Err(AppError::RateLimited { retry_after_secs }) if retry_after_secs >= 1
+        ));
+        // Other classes and other users are unaffected.
+        limiter
+            .enforce_user(alice, ApiOperation::Read)
+            .await
+            .unwrap();
+        limiter
+            .enforce_user(alice, ApiOperation::Create)
+            .await
+            .unwrap();
+        limiter
+            .enforce_user(bob, ApiOperation::SendMessage)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn unauthenticated_requests_are_counted_per_network() {
+        let (limiter, _) = api_limiter(tight(1));
+        limiter
+            .enforce_unauthenticated(ip("203.0.113.7"))
+            .await
+            .unwrap();
+        assert!(matches!(
+            limiter.enforce_unauthenticated(ip("203.0.113.7")).await,
+            Err(AppError::RateLimited { .. })
+        ));
+        limiter
+            .enforce_unauthenticated(ip("203.0.113.8"))
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn defaults_are_generous_for_people_and_strict_for_creation() {
+        let config = ApiRateLimitConfig::default();
+        assert!(config.reads_per_user.max > config.writes_per_user.max);
+        assert!(config.writes_per_user.max > config.messages_per_user.max);
+        assert!(config.creations_per_user.window > config.messages_per_user.window);
     }
 
     #[test]
