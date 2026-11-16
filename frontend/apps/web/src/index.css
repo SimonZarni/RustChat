@@ -186,7 +186,7 @@ kbd { padding: 2px 5px; border: 1px solid #e2e5e7; border-radius: 4px; backgroun
 .load-older-button { display: block; margin: 0 auto 24px; padding: 8px 12px; border: 1px solid #e1e5e8; border-radius: 5px; background: #fff; color: #65727d; font-size: 10px; cursor: pointer; }
 .load-older-button:hover:not(:disabled) { border-color: #bac4cc; color: #435668; }
 .load-older-button:disabled { opacity: .6; cursor: progress; }
-.message-row { display: flex; gap: 11px; margin-top: 19px; }
+.message-row { position: relative; display: flex; gap: 11px; margin-top: 19px; }
 .message-row.grouped { margin-top: 5px; }
 .message-avatar { width: 29px; height: 29px; border: 1px solid #e3e6e8; border-radius: 9px; background: #f1f3f4; color: #64727d; font-size: 10px; }
 .message-row.own .message-avatar { background: #e4e9ed; color: #52677a; }
@@ -387,14 +387,7 @@ html[data-theme='dark'] .channel-item { color: var(--ink); }
 .typing-indicator { padding: 4px 14px 8px; color: #839097; font-size: 11px; }
 html[data-theme='dark'] .signout-button { color: #b4bfc7; }
 
-/* Message footer: one quiet row for reply, edit, delete and delivery state. */
-.message-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; margin-top: 3px; color: var(--muted); font-size: 11px; }
-.message-footer small { font-size: 11px; }
-.message-link { padding: 2px 0; border: 0; background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
-.message-link:hover, .message-link:focus-visible { color: var(--accent); text-decoration: underline; }
-.message-link.danger:hover, .message-link.danger:focus-visible { color: #b3261e; }
 .dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 18px; }
-html[data-theme='dark'] .message-link.danger:hover, html[data-theme='dark'] .message-link.danger:focus-visible { color: #ff8a80; }
 
 /* Confirm and prompt dialogs. */
 .dialog-actions button { min-height: 40px; margin-top: 0; padding: 0 16px; font-size: 13px; }
@@ -426,3 +419,39 @@ html[data-theme='dark'] .manager-section > label { color: var(--muted); }
 .reaction-picker button { width: 34px; height: 34px; padding: 0; border: 0; border-radius: 50%; background: transparent; font-size: 17px; line-height: 1; cursor: pointer; }
 .reaction-picker button:hover, .reaction-picker button[aria-pressed='true'] { background: var(--accent-soft); }
 .reaction-picker button:disabled { opacity: .5; cursor: wait; }
+
+/* Message actions: a small floating group, visible on hover, focus or after a tap. */
+.message-status { display: flex; gap: 10px; margin-top: 3px; color: var(--muted); font-size: 10px; }
+.message-toolbar { position: absolute; z-index: 5; top: -14px; right: 6px; display: flex; gap: 1px; padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: 0 2px 8px rgba(20, 30, 40, .1); opacity: 0; pointer-events: none; transition: opacity .12s; }
+.message-row:hover .message-toolbar, .message-row:focus-within .message-toolbar, .message-row.active .message-toolbar { opacity: 1; pointer-events: auto; }
+.toolbar-button { width: 28px; height: 28px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.toolbar-button:hover, .toolbar-button[aria-expanded='true'] { background: var(--accent-soft); color: var(--ink); }
+.reaction-picker { top: calc(100% + 6px); right: 0; bottom: auto; left: auto; }
+.message-menu { position: absolute; z-index: 15; top: calc(100% + 6px); right: 0; display: grid; min-width: 120px; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: 0 8px 24px rgba(20, 30, 40, .14); }
+.message-menu button { padding: 7px 10px; border: 0; border-radius: 5px; background: transparent; color: var(--ink); font-size: 12px; text-align: left; cursor: pointer; }
+.message-menu button:hover, .message-menu button:focus-visible { background: var(--accent-soft); }
+.message-menu button.danger { color: #b3261e; }
+html[data-theme='dark'] .message-menu button.danger { color: #ff8a80; }
+
+/* Minimum target sizes (24px everywhere, larger for touch). */
+.sidebar-profile summary, .signout-button { display: inline-flex; align-items: center; min-height: 24px; }
+.section-heading button, .community-actions button, .invite-code button { min-width: 24px; min-height: 24px; }
+.new-button { min-width: 31px; }
+
+/* Small screens and touch: message actions sit under the message instead of floating over its text. */
+@media (hover: none), (max-width: 700px) {
+  .message-toolbar { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; border: 0; box-shadow: none; clip-path: inset(50%); opacity: 1; pointer-events: auto; }
+  .message-row:hover .message-toolbar { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; border: 0; clip-path: inset(50%); }
+  .message-row.active .message-toolbar, .message-row:focus-within .message-toolbar { position: static; width: max-content; height: auto; margin-top: 6px; padding: 2px; overflow: visible; border: 1px solid var(--line); clip-path: none; }
+  .toolbar-button { width: 38px; height: 38px; }
+  .reaction-picker, .message-menu { right: auto; left: 0; }
+  .reaction-picker button { width: 38px; height: 38px; }
+  .message-menu button { padding: 11px 14px; font-size: 13px; }
+}
+@media (pointer: coarse) {
+  .sidebar-profile summary, .signout-button { min-height: 40px; padding-inline: 6px; }
+  .section-heading button, .community-actions button, .invite-code button { min-width: 40px; min-height: 40px; }
+  .new-button { width: 40px; height: 40px; }
+  .conversation-item, .channel-item, .community-item { min-height: 44px; }
+  .dialog-close { width: 40px; height: 40px; }
+}

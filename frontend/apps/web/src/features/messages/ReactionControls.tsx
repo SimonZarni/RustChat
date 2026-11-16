@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { REACTION_EMOJI } from '../../lib/permissions'
 import type { Message, MessageReaction } from '../../types'
 
@@ -7,6 +7,9 @@ type Props = {
   reactions: MessageReaction[] | undefined
   pending: Record<string, boolean>
   onToggle: (message: Message, emoji: string) => void
+  /** Style and content of the opening button; defaults to a "React" text link. */
+  className?: string
+  children?: ReactNode
 }
 
 const label = (emoji: string, reaction: MessageReaction | undefined) =>
@@ -16,7 +19,7 @@ const label = (emoji: string, reaction: MessageReaction | undefined) =>
  * Reactions that exist on a message, shown as chips, plus a "React" button that opens a
  * small picker of the allowed emoji. Nothing is drawn for reactions nobody has used.
  */
-export function ReactionChips({ message, reactions, pending, onToggle }: Omit<Props, never>) {
+export function ReactionChips({ message, reactions, pending, onToggle }: Props) {
   const used = REACTION_EMOJI.filter((emoji) => (reactions?.find((item) => item.emoji === emoji)?.count ?? 0) > 0)
   if (used.length === 0) return null
   return (
@@ -35,7 +38,7 @@ export function ReactionChips({ message, reactions, pending, onToggle }: Omit<Pr
   )
 }
 
-export function ReactButton({ message, reactions, pending, onToggle }: Props) {
+export function ReactButton({ message, reactions, pending, onToggle, className = 'message-link', children }: Props) {
   const [open, setOpen] = useState(false)
   const wrapper = useRef<HTMLSpanElement | null>(null)
   const toggle = useRef<HTMLButtonElement | null>(null)
@@ -65,7 +68,7 @@ export function ReactButton({ message, reactions, pending, onToggle }: Props) {
 
   return (
     <span className="react-wrapper" ref={wrapper}>
-      <button type="button" className="message-link" ref={toggle} aria-haspopup="true" aria-expanded={open} onClick={() => setOpen((current) => !current)}>React</button>
+      <button type="button" className={className} ref={toggle} aria-label="React" title="React" aria-haspopup="true" aria-expanded={open} onClick={() => setOpen((current) => !current)}>{children ?? 'React'}</button>
       {open && (
         <div className="reaction-picker" role="group" aria-label="Choose a reaction">
           {REACTION_EMOJI.map((emoji) => {

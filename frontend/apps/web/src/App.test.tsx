@@ -291,7 +291,7 @@ describe('App', () => {
 
     render(<App />)
 
-    expect(await screen.findByText('Delivered to 1')).toBeInTheDocument()
+    expect(await screen.findByText('Delivered')).toBeInTheDocument()
     expect(screen.getByRole('log')).toHaveAttribute('aria-live', 'polite')
     expect(await screen.findByText('@bobby')).toHaveClass('mention-highlight')
     expect(screen.getByText('work').tagName).toBe('STRONG')
@@ -355,11 +355,11 @@ describe('App', () => {
     // Wait for the initial history and cursors so the change below can only arrive through the reconnect.
     await screen.findByText('Hello')
     await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith('/read-cursors')).length).toBeGreaterThanOrEqual(1))
-    expect(screen.queryByText('Seen by 1')).not.toBeInTheDocument()
+    expect(screen.queryByText('Seen')).not.toBeInTheDocument()
 
     durableReadSequence = 1
     FakeWebSocket.instances[0]!.close()
-    await screen.findByText('Seen by 1', {}, { timeout: 5000 })
+    await screen.findByText('Seen', {}, { timeout: 5000 })
     expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith('/read-cursors')).length).toBeGreaterThanOrEqual(2)
   }, 12000)
 })

@@ -1,9 +1,10 @@
-import { useLayoutEffect, useRef } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { initial, shortId } from '../../lib/ids'
 import { timeLabel } from '../../lib/format'
 import type { Message, MessageReaction, User } from '../../types'
 import { renderMessageContent } from './markdown'
-import { ReactButton, ReactionChips } from './ReactionControls'
+import { MessageActions } from './MessageActions'
+import { ReactionChips } from './ReactionControls'
 
 const GROUPING_WINDOW_MS = 5 * 60 * 1000
 
@@ -27,6 +28,10 @@ type Props = {
   onDelete: (message: Message) => void
 }
 
+/** One quiet word for the newest message you sent; counts only matter once more than one person is involved. */
+const deliveryLabel = (deliveredTo: number, readBy: number) =>
+  readBy > 0 ? (readBy > 1 ? `Seen by ${readBy}` : 'Seen') : deliveredTo > 0 ? (deliveredTo > 1 ? `Delivered to ${deliveredTo}` : 'Delivered') : 'Sent'
+
 const countReached = (cursors: Record<string, number>, userId: string, sequence: number) =>
   Object.entries(cursors).filter(([reader, position]) => reader !== userId && position >= sequence).length
 
@@ -37,6 +42,9 @@ export function MessageList({
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const endRef = useRef<HTMLDivElement | null>(null)
   const heightBeforePrepend = useRef<number | null>(null)
+  // The message last touched keeps its action buttons visible (essential on touch screens).
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const lastOwnId = [...messages].reverse().find((item) => item.sender_id === user.id && !item.deleted_at)?.id
 
   // Keep the viewport anchored when older messages are prepended; otherwise follow new messages.
   useLayoutEffect(() => {
@@ -70,7 +78,7 @@ export function MessageList({
             const readBy = countReached(readCursors, user.id, message.sequence)
             const quoted = message.reply_to_message_id ? messages.find((item) => item.id === message.reply_to_message_id) : undefined
             return (
-              <article className={`message-row ${own ? 'own' : ''} ${grouped ? 'grouped' : ''}`} key={message.id}>
+              <article className={`message-row ${own ? 'own' : ''} ${grouped ? 'grouped' : ''} ${activeId === message.id ? 'active' : ''}`} key={message.id} onClick={() => setActiveId(message.id)}>
                 <div className="message-avatar">{own ? initial(user.username) : initial(profiles[message.sender_id]?.username ?? '?')}</div>
                 <div className="message-content">
                   {!grouped && (
@@ -82,16 +90,18 @@ export function MessageList({
                   {message.reply_to_message_id && <blockquote className="reply-quote">{quoted?.content ?? 'Original message'}</blockquote>}
                   <div className="message-body">{renderMessageContent(message, profiles)}</div>
                   {!message.deleted_at && <ReactionChips message={message} reactions={reactions[message.id]} pending={pendingReactions} onToggle={onToggleReaction} />}
-                  <div className="message-footer">
-                    {!message.deleted_at && <ReactButton message={message} reactions={reactions[message.id]} pending={pendingReactions} onToggle={onToggleReaction} />}
-                    <button className="message-link" type="button" onClick={() => onReply(message)}>Reply</button>
-                    {!message.deleted_at && own && <button className="message-link" type="button" onClick={() => onEdit(message)}>Edit</button>}
-                    {!message.deleted_at && own && <button className="message-link danger" type="button" onClick={() => onDelete(message)}>Delete</button>}
-                    {own && deliveredTo > 0 && <small>Delivered to {deliveredTo}</small>}
-                    {own && deliveredTo === 0 && <small>Sent</small>}
-                    {own && readBy > 0 && <small>Seen by {readBy}</small>}
-                    {message.edited_at && <small>edited</small>}
-                  </div>
+                  {(message.edited_at || message.id === lastOwnId) && (
+                    <div className="message-status">
+                      {message.edited_at && <small>edited</small>}
+                      {message.id === lastOwnId && <small>{deliveryLabel(deliveredTo, readBy)}</small>}
+                    </div>
+                  )}
+                  {!message.deleted_at && (
+                    <MessageActions
+                      message={message} own={own} reactions={reactions[message.id]} pendingReactions={pendingReactions}
+                      onToggleReaction={onToggleReaction} onReply={onReply} onEdit={onEdit} onDelete={onDelete}
+                    />
+                  )}
                 </div>
               </article>
             )
