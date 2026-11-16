@@ -184,6 +184,7 @@ Do not copy commands into this guide until they have been tested against the rep
 
 - [Product requirements (PRD)](docs/RustChat-PRD.md)
 - [UI design specification](docs/UI-DESIGN-SPECIFICATION.md)
+- [Manual screen-reader review](docs/ACCESSIBILITY_REVIEW.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Database](docs/DATABASE.md)
 - [API and realtime protocol](docs/API_AND_REALTIME.md)
