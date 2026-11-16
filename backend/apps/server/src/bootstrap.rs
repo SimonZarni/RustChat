@@ -8,11 +8,11 @@ use rustchat_application::{
     conversations::{ConversationConfig, ConversationService},
     error::AppError,
     messages::{MessageConfig, MessageService},
-    ports::OutboxRepository,
     ratelimit::ApiRateLimiter,
 };
-use rustchat_http::{AppEvents, AppState, HttpConfig, router};
+use rustchat_http::{AppEvents, AppState, HttpConfig, cluster, router};
 use rustchat_infrastructure::{
+    cluster::{PgEventBus, PgPresenceStore},
     mfa::AesGcmTotpEngine,
     postgres::{
         self, PgCommunityRepository, PgConversationRepository, PgMessageRepository,
@@ -110,20 +110,33 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     let (delivery_cursor_sender, _) = tokio::sync::broadcast::channel(256);
     let (presence_sender, _) = tokio::sync::broadcast::channel(256);
     let (community_sender, _) = tokio::sync::broadcast::channel(256);
+    // Several instances can share one database: events, outbox dispatch and presence
+    // coordinate through it. A random id tells an instance's own events apart.
+    let instance_id = uuid::Uuid::now_v7();
+    let events = AppEvents {
+        messages: event_sender.clone(),
+        typing: typing_sender,
+        read_cursors: read_cursor_sender,
+        reactions: reaction_sender,
+        delivery_cursors: delivery_cursor_sender,
+        presence: presence_sender,
+        community: community_sender,
+    };
+    let outbox = Arc::new(PgOutboxRepository::new(pool.clone()));
+    let (resync_sender, _) = tokio::sync::broadcast::channel(16);
+    let bus = PgEventBus::start(
+        pool.clone(),
+        instance_id,
+        cluster::remote_event_handler(events.clone(), outbox.clone()),
+        cluster::gap_handler(resync_sender.clone()),
+    );
+    let presence_store = Arc::new(PgPresenceStore::new(pool.clone(), instance_id));
     let state = AppState::new(
         Arc::new(auth),
         conversations,
         messages,
         communities,
-        AppEvents {
-            messages: event_sender.clone(),
-            typing: typing_sender,
-            read_cursors: read_cursor_sender,
-            reactions: reaction_sender,
-            delivery_cursors: delivery_cursor_sender,
-            presence: presence_sender,
-            community: community_sender,
-        },
+        events,
         HttpConfig {
             allowed_origins: config.allowed_origins,
             cookie_secure: config.cookie_secure,
@@ -133,6 +146,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     )
     // General API budgets are per server process (in memory, bounded); the stricter
     // authentication limits above are shared through PostgreSQL.
+    .with_cluster(bus.clone(), presence_store.clone(), resync_sender)
     .with_api_rate_limiter(Arc::new(ApiRateLimiter::new(
         Arc::new(InMemoryRateLimiter::new()),
         Arc::new(SystemClock),
@@ -149,33 +163,9 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(config.bind_addr).await?;
     tracing::info!(addr = %listener.local_addr()?, "rustchat server listening");
     // Connection info exposes the peer address used for rate limiting.
-    let outbox = PgOutboxRepository::new(pool.clone());
-    let publisher = tokio::spawn(async move {
-        loop {
-            match outbox.pending_messages(128).await {
-                Ok(pending) if pending.is_empty() => {
-                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-                }
-                Ok(pending) => {
-                    for message in pending {
-                        let id = message.id;
-                        // Broadcast is bounded and process-local. The after_sequence API
-                        // recovers any event missed by a disconnected or slow client.
-                        let _ = event_sender.send(message);
-                        if let Err(error) = outbox.mark_message_published(id).await {
-                            tracing::error!(%error, "failed to mark outbox message published");
-                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                            break;
-                        }
-                    }
-                }
-                Err(error) => {
-                    tracing::error!(%error, "failed to poll message outbox");
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                }
-            }
-        }
-    });
+    // Claimed with a lease, so instances sharing the database each dispatch different events.
+    let publisher = cluster::spawn_outbox_dispatcher(outbox, event_sender, bus);
+    let heartbeat = cluster::spawn_presence_heartbeat(presence_store);
     let serve_result = axum::serve(
         listener,
         router(state).into_make_service_with_connect_info::<SocketAddr>(),
@@ -183,6 +173,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     .with_graceful_shutdown(shutdown::signal())
     .await;
     publisher.abort();
+    heartbeat.abort();
     serve_result?;
     Ok(())
 }

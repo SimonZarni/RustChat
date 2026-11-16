@@ -607,11 +607,47 @@ pub trait CommunityRepository: Send + Sync {
 
 #[async_trait]
 pub trait OutboxRepository: Send + Sync {
+    /// Claim up to `limit` undispatched events for this instance with a lease and
+    /// return the messages they describe, oldest first. Instances sharing the
+    /// database receive disjoint events; an unfinished claim becomes available
+    /// again when its lease expires.
     async fn pending_messages(
         &self,
         limit: usize,
     ) -> Result<Vec<rustchat_domain::message::Message>, AppError>;
     async fn mark_message_published(&self, message_id: MessageId) -> Result<(), AppError>;
+    /// The current state of one message, as dispatched to realtime clients.
+    async fn message_by_id(
+        &self,
+        message_id: MessageId,
+    ) -> Result<Option<rustchat_domain::message::Message>, AppError>;
+}
+
+/// Tells the other server instances about a realtime event. Events are hints:
+/// clients recover anything missed from durable history, so implementations
+/// never block the caller and may drop events under load.
+pub trait EventBus: Send + Sync {
+    fn publish(&self, topic: &str, payload: serde_json::Value);
+}
+
+/// Used when a single instance runs: there is nobody else to tell.
+pub struct NoEventBus;
+
+impl EventBus for NoEventBus {
+    fn publish(&self, _topic: &str, _payload: serde_json::Value) {}
+}
+
+/// Which users have a live WebSocket on any instance. The store decides the
+/// transitions: `connect` is true only when the user was not already online
+/// elsewhere, and `disconnect` only when no instance still has them.
+#[async_trait]
+pub trait PresenceStore: Send + Sync {
+    async fn connect(&self, user: UserId) -> Result<bool, AppError>;
+    async fn disconnect(&self, user: UserId) -> Result<bool, AppError>;
+    async fn online(&self, users: &[UserId])
+    -> Result<std::collections::HashSet<UserId>, AppError>;
+    /// Keep this instance's connections alive; call periodically.
+    async fn refresh(&self) -> Result<(), AppError>;
 }
 
 #[async_trait]

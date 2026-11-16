@@ -1,6 +1,6 @@
 # 0009. Single-instance WebSocket delivery from the PostgreSQL outbox
 
-- **Status:** Accepted
+- **Status:** Partly superseded by [0014](0014-multi-instance-realtime-through-postgresql.md) (the single-instance constraint)
 - **Date:** 2026-11-14
 
 ## Context

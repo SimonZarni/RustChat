@@ -2951,10 +2951,35 @@ impl PgOutboxRepository {
 
 #[async_trait]
 impl rustchat_application::ports::OutboxRepository for PgOutboxRepository {
+    async fn message_by_id(&self, message_id: MessageId) -> Result<Option<Message>, AppError> {
+        let row = sqlx::query("SELECT m.id, m.conversation_id, m.sender_id, m.sequence, m.client_message_id, m.reply_to_message_id, m.content, m.created_at, m.edited_at, m.deleted_at, ARRAY(SELECT mm.user_id FROM message_mentions mm WHERE mm.message_id = m.id ORDER BY mm.user_id) AS mentioned_user_ids FROM messages m WHERE m.id = $1")
+            .bind(message_id.as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db_error)?;
+        row.as_ref().map(message_from_row).transpose()
+    }
+
     async fn pending_messages(&self, limit: usize) -> Result<Vec<Message>, AppError> {
         let limit = i64::try_from(limit.clamp(1, 500)).unwrap_or(500);
-        let rows = sqlx::query("SELECT m.id, m.conversation_id, m.sender_id, m.sequence, m.client_message_id, m.reply_to_message_id, m.content, m.created_at, m.edited_at, m.deleted_at, ARRAY(SELECT mm.user_id FROM message_mentions mm WHERE mm.message_id = m.id ORDER BY mm.user_id) AS mentioned_user_ids FROM outbox_events o JOIN messages m ON m.id = COALESCE(NULLIF(o.payload->>'message_id', '')::uuid, NULLIF(o.payload->'payload'->>'message_id', '')::uuid, o.id) WHERE o.published_at IS NULL ORDER BY o.created_at, o.id LIMIT $1")
-            .bind(limit).fetch_all(&self.pool).await.map_err(db_error)?;
+        // Claim first, then read: SKIP LOCKED gives concurrent instances disjoint events,
+        // and the lease lets another instance take over if this one dies mid-dispatch.
+        let claimed: Vec<Uuid> = sqlx::query_scalar(
+            "UPDATE outbox_events SET claimed_until = now() + interval '30 seconds' \
+             WHERE id IN (SELECT id FROM outbox_events \
+                          WHERE published_at IS NULL AND (claimed_until IS NULL OR claimed_until <= now()) \
+                          ORDER BY created_at, id LIMIT $1 FOR UPDATE SKIP LOCKED) \
+             RETURNING id",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_error)?;
+        if claimed.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = sqlx::query("SELECT m.id, m.conversation_id, m.sender_id, m.sequence, m.client_message_id, m.reply_to_message_id, m.content, m.created_at, m.edited_at, m.deleted_at, ARRAY(SELECT mm.user_id FROM message_mentions mm WHERE mm.message_id = m.id ORDER BY mm.user_id) AS mentioned_user_ids FROM outbox_events o JOIN messages m ON m.id = COALESCE(NULLIF(o.payload->>'message_id', '')::uuid, NULLIF(o.payload->'payload'->>'message_id', '')::uuid, o.id) WHERE o.id = ANY($1) ORDER BY o.created_at, o.id")
+            .bind(&claimed).fetch_all(&self.pool).await.map_err(db_error)?;
         rows.iter().map(message_from_row).collect()
     }
 

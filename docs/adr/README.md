@@ -36,5 +36,6 @@ Statuses: `Proposed`, `Accepted`, `Superseded by NNNN`, `Rejected`.
 | [0011](0011-postgresql-shared-auth-rate-limits.md) | PostgreSQL-shared authentication rate limits | Accepted |
 | [0012](0012-email-verification.md) | Email verification gates account recovery | Accepted |
 | [0013](0013-totp-two-step-verification.md) | Optional TOTP two-step verification | Accepted |
+| [0014](0014-multi-instance-realtime-through-postgresql.md) | Multi-instance realtime through PostgreSQL | Accepted |
 
 ADRs 0001 to 0008 were written on 2026-11-14, after the decisions had been made in earlier work; their dates reflect when they were recorded, not when the choice was first discussed.

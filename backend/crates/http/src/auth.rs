@@ -509,10 +509,13 @@ pub async fn update_privacy(
             },
         )
         .await?;
-    let online = privacy
-        .presence_visible
-        .then(|| state.presence.is_online(auth.user.id.as_uuid()));
-    let _ = state.presence_events.send(crate::PresenceEvent {
+    let user = auth.user.id.as_uuid();
+    let online = if privacy.presence_visible {
+        Some(state.presence.online_among(&[user]).await.contains(&user))
+    } else {
+        None
+    };
+    state.publish_presence(crate::PresenceEvent {
         user_id: auth.user.id.as_uuid(),
         online,
         occurred_at: OffsetDateTime::now_utc(),

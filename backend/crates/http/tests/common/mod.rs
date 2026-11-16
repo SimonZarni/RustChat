@@ -19,12 +19,13 @@ use rustchat_application::{
     ports::RateLimitRule,
     ratelimit::{ApiRateLimitConfig, ApiRateLimiter, RateLimitConfig},
 };
-use rustchat_http::{AppEvents, AppState, ClientIpSource, HttpConfig, router};
+use rustchat_http::{AppEvents, AppState, ClientIpSource, HttpConfig, cluster, router};
 use rustchat_infrastructure::{
+    cluster::{PgEventBus, PgPresenceStore},
     mfa::AesGcmTotpEngine,
     postgres::{
         PgCommunityRepository, PgConversationRepository, PgMessageRepository, PgMfaRepository,
-        PgSessionRepository, PgUserRepository,
+        PgOutboxRepository, PgSessionRepository, PgUserRepository,
     },
     ratelimit::InMemoryRateLimiter,
     security::{Argon2Hasher, OsTokenService, SystemClock},
@@ -77,6 +78,10 @@ impl CapturedEmail {
 }
 
 pub struct Options {
+    /// Run as one of several instances sharing the database: share realtime events through
+    /// PostgreSQL, claim outbox events with leases and count presence across instances.
+    /// The value identifies this instance.
+    pub cluster: Option<uuid::Uuid>,
     /// Offer TOTP enrolment (real engine and repository, fixed test key).
     pub mfa: bool,
     /// Accounts treated as instance administrators.
@@ -96,6 +101,7 @@ impl Default for Options {
             window: time::Duration::hours(1),
         };
         Self {
+            cluster: None,
             mfa: false,
             admin_user_ids: Default::default(),
             email: None,
@@ -111,7 +117,17 @@ impl Default for Options {
     }
 }
 
+/// A running server instance's router plus the handle that makes its sockets resynchronize.
+pub struct Node {
+    pub router: Router,
+    pub resync: tokio::sync::broadcast::Sender<()>,
+}
+
 pub fn app(pool: PgPool, options: Options) -> Router {
+    node(pool, options).router
+}
+
+pub fn node(pool: PgPool, options: Options) -> Node {
     let session_ttl = time::Duration::days(30);
     let auth = AuthService::new(
         Arc::new(PgUserRepository::new(pool.clone())),
@@ -154,27 +170,29 @@ pub fn app(pool: PgPool, options: Options) -> Router {
         MessageConfig { max_page_size: 100 },
     );
     let communities = CommunityService::new(
-        Arc::new(PgCommunityRepository::new(pool)),
+        Arc::new(PgCommunityRepository::new(pool.clone())),
         Arc::new(OsTokenService),
         Arc::new(SystemClock),
         CommunityServiceConfig {
             max_invite_ttl: time::Duration::days(30),
         },
     );
+    let events = AppEvents {
+        messages: tokio::sync::broadcast::channel(256).0,
+        typing: tokio::sync::broadcast::channel(256).0,
+        read_cursors: tokio::sync::broadcast::channel(256).0,
+        reactions: tokio::sync::broadcast::channel(256).0,
+        delivery_cursors: tokio::sync::broadcast::channel(256).0,
+        presence: tokio::sync::broadcast::channel(256).0,
+        community: tokio::sync::broadcast::channel(256).0,
+    };
+    let (resync, _) = tokio::sync::broadcast::channel(16);
     let mut state = AppState::new(
         Arc::new(auth),
         Arc::new(conversations),
         Arc::new(messages),
         Arc::new(communities),
-        AppEvents {
-            messages: tokio::sync::broadcast::channel(256).0,
-            typing: tokio::sync::broadcast::channel(256).0,
-            read_cursors: tokio::sync::broadcast::channel(256).0,
-            reactions: tokio::sync::broadcast::channel(256).0,
-            delivery_cursors: tokio::sync::broadcast::channel(256).0,
-            presence: tokio::sync::broadcast::channel(256).0,
-            community: tokio::sync::broadcast::channel(256).0,
-        },
+        events.clone(),
         HttpConfig {
             allowed_origins: vec![ORIGIN.to_owned()],
             cookie_secure: true,
@@ -189,7 +207,26 @@ pub fn app(pool: PgPool, options: Options) -> Router {
             limits,
         )));
     }
-    router(state)
+    if let Some(instance) = options.cluster {
+        let outbox = Arc::new(PgOutboxRepository::new(pool.clone()));
+        let bus = PgEventBus::start(
+            pool.clone(),
+            instance,
+            cluster::remote_event_handler(events.clone(), outbox.clone()),
+            cluster::gap_handler(resync.clone()),
+        );
+        state = state.with_cluster(
+            bus.clone(),
+            Arc::new(PgPresenceStore::new(pool, instance)),
+            resync.clone(),
+        );
+        // Detached: it runs for the life of the test's runtime.
+        cluster::spawn_outbox_dispatcher(outbox, events.messages.clone(), bus);
+    }
+    Node {
+        router: router(state),
+        resync,
+    }
 }
 
 pub struct Reply {

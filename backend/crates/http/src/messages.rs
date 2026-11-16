@@ -140,7 +140,7 @@ pub async fn advance_read_cursor(
         .messages
         .advance_read_cursor(auth.user.id, conversation, body.sequence)
         .await?;
-    let _ = state.read_cursor_events.send(crate::ReadCursorEvent {
+    state.publish_read_cursor(crate::ReadCursorEvent {
         conversation_id: conversation.as_uuid(),
         user_id: cursor.user_id.as_uuid(),
         sequence: cursor.sequence,
@@ -178,14 +178,12 @@ pub async fn advance_delivery_cursor(
         .advance_delivery_cursor(auth.user.id, conversation, body.sequence)
         .await?;
     if cursor.advanced {
-        let _ = state
-            .delivery_cursor_events
-            .send(crate::DeliveryCursorEvent {
-                conversation_id: conversation.as_uuid(),
-                user_id: cursor.user_id.as_uuid(),
-                sequence: cursor.sequence,
-                occurred_at: cursor.updated_at,
-            });
+        state.publish_delivery_cursor(crate::DeliveryCursorEvent {
+            conversation_id: conversation.as_uuid(),
+            user_id: cursor.user_id.as_uuid(),
+            sequence: cursor.sequence,
+            occurred_at: cursor.updated_at,
+        });
     }
     Ok(Json(DeliveryCursorEnvelope {
         cursor: cursor.into(),
@@ -274,7 +272,7 @@ async fn set_reaction(
         .set_reaction(user_id, conversation, message_id, emoji.clone(), added)
         .await?;
     if mutation.changed {
-        let _ = state.reaction_events.send(crate::ReactionEvent {
+        state.publish_reaction(crate::ReactionEvent {
             conversation_id: conversation.as_uuid(),
             message_id: message_id.as_uuid(),
             user_id: user_id.as_uuid(),
@@ -424,7 +422,7 @@ pub async fn edit(
             body.content,
         )
         .await?;
-    let _ = state.events.send(updated.clone());
+    state.publish_message(&updated);
     Ok(Json(MessageEnvelope {
         message: updated.into(),
     }))
@@ -443,7 +441,7 @@ pub async fn delete(
             parse_message_id(&message)?,
         )
         .await?;
-    let _ = state.events.send(deleted.clone());
+    state.publish_message(&deleted);
     Ok(Json(MessageEnvelope {
         message: deleted.into(),
     }))

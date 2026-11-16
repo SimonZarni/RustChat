@@ -2,7 +2,7 @@
 
 ## 1. Purpose and status
 
-This document describes the intended high-level architecture and current implementation of RustChat. Phase 0 is complete. Phase 1 implementation includes identity, editable profiles and privacy-scoped presence, authenticated password change, account lifecycle, PostgreSQL-shared authentication rate limits, conversations, communities, channels and permissions, durable messaging, emoji reactions, read and delivery cursors, single-instance WebSocket delivery for messages, presence, typing, reactions, delivery cursors, and community-scoped member/channel invalidations, plus the initial web client and instance administration. Screen-reader review remains outstanding; operational validation beyond the local deployment rehearsal is follow-up work. Later sections distinguish implemented components from planned architecture; verify details against the code and API documentation.
+This document describes the intended high-level architecture and current implementation of RustChat. Phase 0 is complete. Phase 1 implementation includes identity, editable profiles and privacy-scoped presence, authenticated password change, account lifecycle, PostgreSQL-shared authentication rate limits, conversations, communities, channels and permissions, durable messaging, emoji reactions, read and delivery cursors, WebSocket delivery (shared across server instances) for messages, presence, typing, reactions, delivery cursors, and community-scoped member/channel invalidations, plus the initial web client and instance administration. Screen-reader review remains outstanding; operational validation beyond the local deployment rehearsal is follow-up work. Later sections distinguish implemented components from planned architecture; verify details against the code and API documentation.
 
 RustChat is a self-hostable real-time communication platform with a Rust backend and a shared React frontend for web and desktop.
 
@@ -59,7 +59,7 @@ The RustChat application initially runs as a modular monolith. HTTP handling, We
 | HTTP framework | Axum |
 | Database access | SQLx |
 | Primary database | PostgreSQL |
-| Cache / ephemeral coordination | Authentication rate limits use shared PostgreSQL storage; WebSocket fan-out and presence are process-local. Valkey is present in local development but unused by the application |
+| Cache / ephemeral coordination | Authentication rate limits use shared PostgreSQL storage; WebSocket fan-out, outbox dispatch and presence are coordinated through PostgreSQL (`LISTEN/NOTIFY`, row leases and a presence table), so several server instances can share one database. Valkey is present in local development but unused by the application |
 | Realtime client transport | WebSocket |
 | Web frontend | React + TypeScript + Vite |
 | Desktop wrapper | Tauri 2 |
@@ -112,7 +112,7 @@ backend/
 └── tests/
 ```
 
-**Current state:** the workspace has `crates/domain`, `crates/application`, `crates/infrastructure` and `crates/http` (the HTTP part of `interfaces`), plus `apps/server` for bootstrap. Identity, editable basic profiles and privacy-scoped presence, authenticated password change, conversations, communities, channels, roles and permissions, plain-text message persistence with same-conversation replies, member mentions and reactions, read and delivery cursors, and single-instance WebSocket message, presence, typing, reaction and delivery-ack delivery are implemented. Multi-instance fan-out and the planned Valkey adapter are not implemented. Domain modules are flat files until there is enough code to justify the per-area directories shown above. `crates/websocket`, `protocol` and `shared` have not been created.
+**Current state:** the workspace has `crates/domain`, `crates/application`, `crates/infrastructure` and `crates/http` (the HTTP part of `interfaces`), plus `apps/server` for bootstrap. Identity, editable basic profiles and privacy-scoped presence, authenticated password change, conversations, communities, channels, roles and permissions, plain-text message persistence with same-conversation replies, member mentions and reactions, read and delivery cursors, and multi-instance WebSocket message, presence, typing, reaction and delivery-ack delivery are implemented. Fan-out across instances uses PostgreSQL (ADR 0014); a Valkey adapter is not implemented. Domain modules are flat files until there is enough code to justify the per-area directories shown above. `crates/websocket`, `protocol` and `shared` have not been created.
 
 ### Dependency rules
 
@@ -209,7 +209,7 @@ A message send should follow this conceptual sequence:
 
 Use at-least-once delivery with idempotent processing. Do not claim exactly-once network delivery.
 
-The current server polls the PostgreSQL outbox in-process and publishes through a bounded Tokio broadcast channel. This delivers events only to clients connected to that server process. Valkey Pub/Sub could provide cross-instance ephemeral distribution later, but it is not durable storage; PostgreSQL history and the outbox remain the recovery source.
+Each server instance claims pending PostgreSQL outbox rows with a short lease, publishes them through bounded Tokio broadcast channels to the clients connected to it, and shares events with the other instances through PostgreSQL `LISTEN/NOTIFY` (see [ADR 0014](adr/0014-multi-instance-realtime-through-postgresql.md)). Notifications are hints, not storage: PostgreSQL history and the outbox remain the recovery source, and a client that may have missed events is told to reconnect and resynchronize. Valkey Pub/Sub or a broker could replace the notification channel at larger scale.
 
 ## 9. Data and infrastructure
 

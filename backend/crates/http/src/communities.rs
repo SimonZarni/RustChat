@@ -18,7 +18,7 @@ use crate::{
 };
 
 fn publish_community_event(state: &AppState, community_id: CommunityId, kind: &'static str) {
-    let _ = state.community_events.send(CommunityEvent {
+    state.publish_community(CommunityEvent {
         community_id: community_id.as_uuid(),
         kind,
         occurred_at: time::OffsetDateTime::now_utc(),

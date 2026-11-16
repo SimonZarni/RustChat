@@ -255,7 +255,8 @@ async fn run_socket(socket: WebSocket, state: AppState, user_id: UserId, token: 
     let mut delivery_cursor_events = state.delivery_cursor_events.subscribe();
     let mut presence_events = state.presence_events.subscribe();
     let mut community_events = state.community_events.subscribe();
-    let became_online = state.presence.connect(user_id.as_uuid());
+    let mut resync_events = state.resync_events.subscribe();
+    let became_online = state.presence.connect(user_id.as_uuid()).await;
     if became_online
         && state
             .auth
@@ -263,7 +264,7 @@ async fn run_socket(socket: WebSocket, state: AppState, user_id: UserId, token: 
             .await
             .is_ok_and(|privacy| privacy.presence_visible)
     {
-        let _ = state.presence_events.send(crate::PresenceEvent {
+        state.publish_presence(crate::PresenceEvent {
             user_id: user_id.as_uuid(),
             online: Some(true),
             occurred_at: time::OffsetDateTime::now_utc(),
@@ -304,11 +305,13 @@ async fn run_socket(socket: WebSocket, state: AppState, user_id: UserId, token: 
                                 subscriptions.insert(id);
                                 if !send_control(&mut outgoing, ControlReply { kind: "subscribed", conversation_id: Some(id.as_uuid()), code: None }).await { break; }
                                 if let Ok(members) = state.conversations.members_presence(user_id, id).await {
+                                    let ids: Vec<Uuid> = members.iter().map(|(member, _)| member.id.as_uuid()).collect();
+                                    let online = state.presence.online_among(&ids).await;
                                     for (member, visible) in members {
                                         if member.id == user_id { continue; }
                                         let snapshot = crate::PresenceEvent {
                                             user_id: member.id.as_uuid(),
-                                            online: visible.then(|| state.presence.is_online(member.id.as_uuid())),
+                                            online: visible.then(|| online.contains(&member.id.as_uuid())),
                                             occurred_at: time::OffsetDateTime::now_utc(),
                                         };
                                         if !send_presence(&mut outgoing, &snapshot).await { break; }
@@ -336,7 +339,7 @@ async fn run_socket(socket: WebSocket, state: AppState, user_id: UserId, token: 
                                 let allowed = !active || typing_sent_at.get(&id).is_none_or(|last| now.duration_since(*last) >= Duration::from_millis(700));
                                 if allowed {
                                     typing_sent_at.insert(id, now);
-                                    let _ = state.typing_events.send(crate::TypingEvent {
+                                    state.publish_typing(crate::TypingEvent {
                                         conversation_id: id.as_uuid(),
                                         user_id: user_id.as_uuid(),
                                         active,
@@ -357,7 +360,7 @@ async fn run_socket(socket: WebSocket, state: AppState, user_id: UserId, token: 
                                 match state.messages.advance_delivery_cursor(user_id, id, sequence).await {
                                     Ok(cursor) => {
                                         if cursor.advanced {
-                                            let _ = state.delivery_cursor_events.send(crate::DeliveryCursorEvent {
+                                            state.publish_delivery_cursor(crate::DeliveryCursorEvent {
                                                 conversation_id: id.as_uuid(),
                                                 user_id: user_id.as_uuid(),
                                                 sequence: cursor.sequence,
@@ -557,6 +560,11 @@ async fn run_socket(socket: WebSocket, state: AppState, user_id: UserId, token: 
                 }
                 if !send_frame(&mut outgoing, WsMessage::Ping(Vec::new().into())).await { break; }
             }
+            _ = resync_events.recv() => {
+                // Events from other instances may have been missed: reconnect and resync.
+                close_socket(&mut outgoing, 1013, "realtime events were interrupted").await;
+                break;
+            }
             _ = revalidate.tick() => {
                 if state.auth.authenticate(&token).await.is_err() {
                     close_socket(&mut outgoing, 1008, "session expired or revoked").await;
@@ -574,14 +582,14 @@ async fn run_socket(socket: WebSocket, state: AppState, user_id: UserId, token: 
             }
         }
     }
-    if state.presence.disconnect(user_id.as_uuid())
+    if state.presence.disconnect(user_id.as_uuid()).await
         && state
             .auth
             .privacy(user_id)
             .await
             .is_ok_and(|privacy| privacy.presence_visible)
     {
-        let _ = state.presence_events.send(crate::PresenceEvent {
+        state.publish_presence(crate::PresenceEvent {
             user_id: user_id.as_uuid(),
             online: Some(false),
             occurred_at: time::OffsetDateTime::now_utc(),

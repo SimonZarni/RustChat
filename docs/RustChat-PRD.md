@@ -1121,7 +1121,7 @@ implementation.
 -   Optional TOTP two-step verification with recovery codes is included now;
     see [ADR 0013](adr/0013-totp-two-step-verification.md).
 -   Production authentication rate limits use shared PostgreSQL storage,
-    while WebSocket fan-out remains single-instance. See
+    while WebSocket fan-out works across instances through PostgreSQL (ADR 0014). See
     [ADR 0006](adr/0006-in-process-rate-limiting-behind-a-port.md) and
     [ADR 0011](adr/0011-postgresql-shared-auth-rate-limits.md).
 

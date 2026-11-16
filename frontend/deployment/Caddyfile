@@ -1,13 +1,29 @@
+# Every `server` replica is found through Docker DNS (re-resolved every few
+# seconds), so `docker compose up --scale server=N` needs no other change.
+# Realtime events are shared between replicas through PostgreSQL, so
+# WebSockets do not need sticky routing.
+(replicas) {
+	reverse_proxy {
+		dynamic a {
+			name server
+			port 8080
+			refresh 5s
+		}
+		lb_policy least_conn
+		lb_try_duration 3s
+	}
+}
+
 {$RUSTCHAT_DOMAIN:localhost} {
 	encode zstd gzip
 	handle /api/* {
-		reverse_proxy server:8080
+		import replicas
 	}
 	handle /healthz {
-		reverse_proxy server:8080
+		import replicas
 	}
 	handle /readyz {
-		reverse_proxy server:8080
+		import replicas
 	}
 	handle /metrics* {
 		respond 404

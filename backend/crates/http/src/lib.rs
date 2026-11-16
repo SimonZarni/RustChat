@@ -3,6 +3,7 @@
 mod admin;
 mod auth;
 mod client_ip;
+pub mod cluster;
 mod communities;
 mod conversations;
 mod error;
@@ -82,6 +83,10 @@ pub struct AppState {
     pub(crate) presence_events: broadcast::Sender<PresenceEvent>,
     pub(crate) community_events: broadcast::Sender<CommunityEvent>,
     pub(crate) presence: Arc<presence::PresenceTracker>,
+    /// Hands realtime events to the other server instances (a no-op when there is one).
+    pub(crate) bus: Arc<dyn rustchat_application::ports::EventBus>,
+    /// Signals every WebSocket to reconnect and resynchronize (events may have been missed).
+    pub(crate) resync_events: broadcast::Sender<()>,
     pub(crate) config: Arc<HttpConfig>,
     readiness_probe: Arc<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync>,
     metrics: Arc<HttpMetrics>,
@@ -121,10 +126,70 @@ impl AppState {
             presence_events: events.presence,
             community_events: events.community,
             presence: Arc::new(presence::PresenceTracker::default()),
+            bus: Arc::new(rustchat_application::ports::NoEventBus),
+            resync_events: broadcast::channel(16).0,
             config: Arc::new(config),
             readiness_probe: Arc::new(|| Box::pin(async { true })),
             metrics: Arc::new(HttpMetrics::default()),
         }
+    }
+
+    /// Run beside other instances: share realtime events through `bus`, count presence
+    /// across instances with `presence`, and close sockets when `resync` fires.
+    pub fn with_cluster(
+        mut self,
+        bus: Arc<dyn rustchat_application::ports::EventBus>,
+        presence: Arc<dyn rustchat_application::ports::PresenceStore>,
+        resync: broadcast::Sender<()>,
+    ) -> Self {
+        self.bus = bus;
+        self.presence = Arc::new(presence::PresenceTracker::shared(presence));
+        self.resync_events = resync;
+        self
+    }
+
+    fn share<T: serde::Serialize>(&self, topic: &str, event: &T) {
+        if let Ok(payload) = serde_json::to_value(event) {
+            self.bus.publish(topic, payload);
+        }
+    }
+
+    pub(crate) fn publish_message(&self, message: &Message) {
+        let _ = self.events.send(message.clone());
+        self.bus.publish(
+            cluster::TOPIC_MESSAGE,
+            serde_json::json!({ "id": message.id.as_uuid() }),
+        );
+    }
+
+    pub(crate) fn publish_typing(&self, event: TypingEvent) {
+        self.share(cluster::TOPIC_TYPING, &event);
+        let _ = self.typing_events.send(event);
+    }
+
+    pub(crate) fn publish_read_cursor(&self, event: ReadCursorEvent) {
+        self.share(cluster::TOPIC_READ_CURSOR, &event);
+        let _ = self.read_cursor_events.send(event);
+    }
+
+    pub(crate) fn publish_delivery_cursor(&self, event: DeliveryCursorEvent) {
+        self.share(cluster::TOPIC_DELIVERY_CURSOR, &event);
+        let _ = self.delivery_cursor_events.send(event);
+    }
+
+    pub(crate) fn publish_reaction(&self, event: ReactionEvent) {
+        self.share(cluster::TOPIC_REACTION, &event);
+        let _ = self.reaction_events.send(event);
+    }
+
+    pub(crate) fn publish_presence(&self, event: PresenceEvent) {
+        self.share(cluster::TOPIC_PRESENCE, &event);
+        let _ = self.presence_events.send(event);
+    }
+
+    pub(crate) fn publish_community(&self, event: CommunityEvent) {
+        self.share(cluster::TOPIC_COMMUNITY, &event);
+        let _ = self.community_events.send(event);
     }
 
     /// Enforce per-user and unauthenticated request budgets on authenticated routes.
@@ -146,23 +211,25 @@ impl AppState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TypingEvent {
     pub conversation_id: Uuid,
     pub user_id: Uuid,
     pub active: bool,
+    #[serde(with = "time::serde::rfc3339")]
     pub occurred_at: time::OffsetDateTime,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ReadCursorEvent {
     pub conversation_id: Uuid,
     pub user_id: Uuid,
     pub sequence: i64,
+    #[serde(with = "time::serde::rfc3339")]
     pub occurred_at: time::OffsetDateTime,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ReactionEvent {
     pub conversation_id: Uuid,
     pub message_id: Uuid,
@@ -170,30 +237,34 @@ pub struct ReactionEvent {
     pub sequence: i64,
     pub emoji: String,
     pub added: bool,
+    #[serde(with = "time::serde::rfc3339")]
     pub occurred_at: time::OffsetDateTime,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DeliveryCursorEvent {
     pub conversation_id: Uuid,
     pub user_id: Uuid,
     pub sequence: i64,
+    #[serde(with = "time::serde::rfc3339")]
     pub occurred_at: time::OffsetDateTime,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PresenceEvent {
     pub user_id: Uuid,
     /// `None` clears a previously visible status when the user hides presence.
     pub online: Option<bool>,
+    #[serde(with = "time::serde::rfc3339")]
     pub occurred_at: time::OffsetDateTime,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct CommunityEvent {
     pub community_id: Uuid,
     /// `members.updated` or `channels.updated`.
     pub kind: &'static str,
+    #[serde(with = "time::serde::rfc3339")]
     pub occurred_at: time::OffsetDateTime,
 }
 
