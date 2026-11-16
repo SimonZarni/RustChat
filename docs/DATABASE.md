@@ -58,6 +58,7 @@ The implemented tables are described below (`backend/migrations/0001_identity.sq
 | `created_at` | `timestamptz` NOT NULL | UTC |
 | `email` | `text` NULL | Optional normalized recovery address; unique when present. Email verification remains deferred |
 | `deactivated_at` | `timestamptz` NULL | Account is inactive and sessions are revoked; a successful password login clears this timestamp |
+| `suspended_at` | `timestamptz` NULL | Instance-admin suspension; blocks login and active-session use until restored |
 | `deleted_at` | `timestamptz` NULL | Permanent tombstone; credentials and profile are scrubbed, memberships removed, and message history retained |
 
 **`sessions`**
@@ -77,6 +78,8 @@ Indexes: the unique `token_digest` index serves per-request authentication; a pa
 Account deletion is a logical tombstone. User identity fields are replaced, profile fields are scrubbed, active sessions and conversation/community memberships are removed, and message rows remain attached to the stable user ID so conversation history stays intact for remaining members. Community ownership must be transferred first. Backups made before deletion can retain the pre-deletion data until their configured retention period expires; deletion from backup archives is not immediate.
 
 `account_tokens` stores SHA-256 digests of single-use password reset tokens, with creation, expiry, and consumption timestamps. Raw reset tokens are sent only through the configured email delivery service and are never stored. A successful reset and revocation of the account's sessions happen in one transaction.
+
+`rate_limit_entries` stores SHA-256 digests of authentication limiter keys, fixed-window counts and expiration timestamps. The PostgreSQL adapter shares counters across processes using the same database and deletes expired rows as it records new attempts. It does not retain raw usernames or client network addresses.
 
 **`conversations` and `conversation_members`**
 
@@ -99,6 +102,8 @@ Messages may reference a parent message for replies. The composite foreign key b
 **`message_mentions`** stores each distinct user mentioned by a message. The composite foreign key requires the mentioned user to be a current member of the same conversation, so mentions cannot disclose an unrelated account through a message. The application resolves `@username` tokens against current members, returns the resolved IDs in message history and realtime events, and replaces the set when a message is edited. Deleting a message or removing a member clears the corresponding mention rows.
 
 **Communities** use `communities`, `community_members`, `community_roles`, `community_member_roles`, `community_categories`, `community_channels`, `channel_role_overrides`, and `community_invites`. Categories have stable per-community order; channel assignment is nullable and checked against the community. Deleting a category preserves its channels and makes them uncategorized. Text channels reuse conversations for membership and message history. `community_audit_log` records settings changes, member removals, ownership transfers and community deletion; the community foreign key becomes null on deletion so the record remains.
+
+**Instance administration** uses `instance_admin_audit_log` to record actual suspend and restore transitions with actor, target, event, time and details. Suspension updates `users.suspended_at`, revokes active sessions and inserts the audit event in one transaction. There is no API for browsing these instance audit rows yet.
 
 ## 5. Relationships (conceptual)
 

@@ -1,6 +1,6 @@
 # 0006. In-process rate limiting behind a port
 
-- **Status:** Accepted
+- **Status:** Superseded by 0011
 - **Date:** 2026-11-14
 
 ## Context
@@ -19,4 +19,4 @@ Define a `RateLimiter` port in the application layer and implement it in process
 
 ## Consequences
 
-No new dependency, easy to test, fast. State is lost on restart and is not shared, so running several instances multiplies the effective limits: a shared implementation of the same port is required before scaling out. An attacker can keep a victim's logins blocked for one window by failing on purpose; existing sessions are unaffected. Limit values are defaults and not yet configurable. Revisit when a second instance is planned.
+This was the initial implementation and remains useful as an in-memory test adapter. Its counters reset on restart and are not shared across server processes. Production now uses the PostgreSQL implementation described in [ADR 0011](0011-postgresql-shared-auth-rate-limits.md). The account lockout trade-off remains: an attacker can keep a victim's logins blocked for one window by failing on purpose; existing sessions are unaffected.

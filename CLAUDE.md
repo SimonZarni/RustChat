@@ -44,7 +44,8 @@ Do not assume a planned feature has already been implemented. Verify the reposit
 
 - Use TypeScript with strict checking.
 - Keep feature-specific UI, hooks and API interactions within the relevant feature module.
-- Use TanStack Query for remote/server state and Zustand for appropriate local UI state.
+- Follow the current frontend pattern: React component state and `fetch` for server/UI state, with WebSocket lifecycle and event handling in the existing application shell.
+- TanStack Query and Zustand are not current dependencies. Consider adopting them only when a concrete need justifies the added dependencies and migration.
 - Avoid duplicating server state in global stores.
 - Validate untrusted input at boundaries; frontend validation does not replace backend validation.
 - Keep components focused and accessible.

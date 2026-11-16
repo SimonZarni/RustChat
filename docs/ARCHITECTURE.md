@@ -2,7 +2,7 @@
 
 ## 1. Purpose and status
 
-This document describes the intended high-level architecture and current implementation of RustChat. Phase 0 is complete. Phase 1 implementation includes identity, editable profiles and privacy-scoped presence, authenticated password change, account lifecycle, rate-limiting flows, conversations, communities, channels and permissions, durable messaging, emoji reactions, read and delivery cursors, single-instance WebSocket delivery for messages, presence, typing, reactions, delivery cursors, and community-scoped member/channel invalidations, plus an initial web client with community management controls. Password reset and instance administration are implemented. Screen-reader review, broader workflow review and operational validation remain in progress. Later sections distinguish implemented components from planned architecture; verify details against the code and API documentation.
+This document describes the intended high-level architecture and current implementation of RustChat. Phase 0 is complete. Phase 1 implementation includes identity, editable profiles and privacy-scoped presence, authenticated password change, account lifecycle, PostgreSQL-shared authentication rate limits, conversations, communities, channels and permissions, durable messaging, emoji reactions, read and delivery cursors, single-instance WebSocket delivery for messages, presence, typing, reactions, delivery cursors, and community-scoped member/channel invalidations, plus the initial web client and instance administration. Screen-reader review remains outstanding; operational validation beyond the local deployment rehearsal is follow-up work. Later sections distinguish implemented components from planned architecture; verify details against the code and API documentation.
 
 RustChat is a self-hostable real-time communication platform with a Rust backend and a shared React frontend for web and desktop.
 
@@ -29,9 +29,9 @@ flowchart TB
     APP[Application Use Cases]
     WORKER[Background Workers]
     DB[(PostgreSQL)]
-    CACHE[(Valkey)]
-    STORE[(Garage)]
-    MEDIA[LiveKit]
+    CACHE[(Valkey · future)]
+    STORE[(Garage · Phase 2)]
+    MEDIA[LiveKit · Phase 2]
 
     WEB --> PROXY
     DESKTOP --> PROXY
@@ -40,12 +40,12 @@ flowchart TB
     HTTP --> APP
     WS --> APP
     APP --> DB
-    APP --> CACHE
-    APP --> STORE
+    APP -. future .-> CACHE
+    APP -. future .-> STORE
     WORKER --> DB
     WORKER --> CACHE
-    WEB -. WebRTC .-> MEDIA
-    DESKTOP -. WebRTC .-> MEDIA
+    WEB -. Phase 2 .-> MEDIA
+    DESKTOP -. Phase 2 .-> MEDIA
 ```
 
 The RustChat application initially runs as a modular monolith. HTTP handling, WebSocket handling, application services and background workers may be separate runtime tasks or processes, but they share one codebase and domain model.
@@ -59,7 +59,7 @@ The RustChat application initially runs as a modular monolith. HTTP handling, We
 | HTTP framework | Axum |
 | Database access | SQLx |
 | Primary database | PostgreSQL |
-| Cache / ephemeral coordination | Valkey is present in local development, but application rate limits and realtime fan-out are process-local; no Valkey adapter is implemented |
+| Cache / ephemeral coordination | Authentication rate limits use shared PostgreSQL storage; WebSocket fan-out and presence are process-local. Valkey is present in local development but unused by the application |
 | Realtime client transport | WebSocket |
 | Web frontend | React + TypeScript + Vite |
 | Desktop wrapper | Tauri 2 |
@@ -160,12 +160,11 @@ frontend/
 
 Create feature modules as they are implemented; avoid empty placeholder packages.
 
-### Frontend state boundaries
+### Current frontend state boundaries
 
-- TanStack Query: remote/server state such as messages, channels and members.
-- Zustand: local UI state such as selected panels and open dialogs.
-- Realtime client: WebSocket connection lifecycle and incoming event handling.
-- Zod: client-side input and response validation where useful.
+- React component state and `fetch`: remote data and local UI state.
+- `App.tsx`: WebSocket lifecycle, incoming event handling and reconnect synchronization.
+- TanStack Query, Zustand and Zod are not current dependencies; consider them only if the frontend's needs justify their adoption.
 
 The frontend is not a security boundary. The backend must independently validate and authorize every operation.
 
@@ -193,14 +192,14 @@ A message send should follow this conceptual sequence:
 
 Use at-least-once delivery with idempotent processing. Do not claim exactly-once network delivery.
 
-Valkey Pub/Sub may be used for initial ephemeral distribution, but it is not durable storage. The database and outbox remain the recovery source. Consider a durable broker only when actual deployment requirements justify it.
+The current server polls the PostgreSQL outbox in-process and publishes through a bounded Tokio broadcast channel. This delivers events only to clients connected to that server process. Valkey Pub/Sub could provide cross-instance ephemeral distribution later, but it is not durable storage; PostgreSQL history and the outbox remain the recovery source.
 
 ## 9. Data and infrastructure
 
 - PostgreSQL is the source of truth for persistent application data.
-- Valkey is for cache, ephemeral presence and coordination; not permanent message history.
-- Garage (accessed through its S3-compatible API) stores attachments and objects outside application memory.
-- LiveKit provides voice/media infrastructure; RustChat remains responsible for authorization and issuing short-lived room credentials.
+- Valkey is a possible future cache and ephemeral coordination service; it is currently unused.
+- Garage (accessed through its S3-compatible API) is planned for attachments and object storage.
+- LiveKit is planned for voice/media; RustChat would remain responsible for authorization and issuing short-lived room credentials.
 - Caddy terminates HTTPS and routes HTTP/WebSocket traffic.
 - Docker Compose provides an approachable self-hosted deployment.
 
@@ -221,7 +220,7 @@ Track latency percentiles, memory per connection, allocation behavior, database 
 
 ## 11. Scaling strategy
 
-**Initial:** one RustChat deployment with PostgreSQL, Valkey, object storage and LiveKit.
+**Current:** one RustChat server with PostgreSQL, the web client and Caddy. Development Compose also starts Valkey, which the application does not use. Object storage and LiveKit are planned for later phases.
 
 **Growth:** multiple API/WebSocket instances, shared persistence and coordination, separate worker processes if needed.
 

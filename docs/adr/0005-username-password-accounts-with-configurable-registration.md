@@ -20,4 +20,4 @@ The PRD left open the initial registration policy and whether email verification
 
 ## Consequences
 
-Small, testable first slice. Because accounts have no email, registration necessarily reveals when a username is taken, and there is no password recovery yet: a user who forgets a password cannot regain the account. Both are accepted for now and listed in the threat model. Open registration plus rate limiting ([ADR 0006](0006-in-process-rate-limiting-behind-a-port.md)) is the interim abuse control. Revisit when email is added; that change will also revisit enumeration behaviour.
+At the time this ADR was recorded, accounts had no recovery email and no password-reset path. Those consequences were superseded by [ADR 0010](0010-optional-email-password-recovery.md), which added optional recovery email and reset. Registration still reveals taken usernames. Open registration plus rate limiting remains the default, and the initial in-process limiter described in [ADR 0006](0006-in-process-rate-limiting-behind-a-port.md) was later replaced for production by [ADR 0011](0011-postgresql-shared-auth-rate-limits.md).

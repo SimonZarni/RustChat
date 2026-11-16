@@ -2,15 +2,15 @@
 
 Required by [CLAUDE.md](../CLAUDE.md) section 7. Update this file whenever a dependency is added, removed or upgraded across a major version.
 
-**Status:** initial record. Licences were read from package metadata (`cargo metadata`, `pnpm licenses list`) on 2026-11-14. Metadata is the package author's declared licence expression; it is not a legal review.
+**Status:** reviewed against the current lockfiles and package metadata on 2026-11-16. Metadata is the package author's declared licence expression; this inventory is not a legal review.
 
-**Automated checks.** CI runs `cargo deny check` (policy in `backend/deny.toml`: permissive licences only, crates.io as the only source, RustSec advisories, no wildcard versions), `cargo audit` and `pnpm audit --audit-level moderate` on every push and weekly. All three passed locally on 2026-11-14 (the CI job itself has not run yet when this was written). `cargo audit` scans every package in `Cargo.lock` and initially reported two advisories (RUSTSEC-2026-0459 for `libsqlite3-sys`, RUSTSEC-2023-0071 for `rsa`). Both crates belong to sqlx's optional SQLite and MySQL drivers, which appear in the lockfile but are not in the build graph for any target or feature set (verified with `cargo tree --all-features --target all -i`), so they do not affect RustChat. They are ignored in `backend/.cargo/audit.toml` with the reasons written down, and a CI step fails if any of those crates ever enters the real build graph. Remove the ignores when sqlx stops listing the drivers. Exact versions are pinned in `backend/Cargo.lock` and `frontend/pnpm-lock.yaml`.
+**Automated checks.** CI runs `cargo deny check` (policy in `backend/deny.toml`: permissive licences only, crates.io as the only source, RustSec advisories, no wildcard versions), `cargo audit` and `pnpm audit --audit-level moderate` on pushes to `main`, pull requests, and weekly. `cargo audit` scans every package in `Cargo.lock` and reports two ignored advisories (RUSTSEC-2026-0459 for `libsqlite3-sys`, RUSTSEC-2023-0071 for `rsa`). Both crates belong to sqlx's optional SQLite and MySQL drivers, which appear in the lockfile but are not in the build graph for any target or feature set (verified with `cargo tree --all-features --target all -i`), so they do not affect RustChat. They are ignored in `backend/.cargo/audit.toml` with the reasons written down, and a CI step fails if any of those crates ever enters the real build graph. Remove the ignores when sqlx stops listing the drivers. Exact versions are pinned in `backend/Cargo.lock` and `frontend/pnpm-lock.yaml`.
 
 ## Backend (Rust)
 
-231 third-party crates including transitive dependencies. Every crate declares a permissive option (MIT, Apache-2.0, BSD, ISC, Zlib, Unlicense or Unicode-3.0); none is GPL- or AGPL-only. One transitive crate is declared `MIT OR Apache-2.0 OR LGPL-2.1-or-later`, which can be used under its permissive terms.
+The Rust lockfile includes direct and transitive dependencies. The current `cargo deny check` policy permits the configured MIT, Apache, BSD (including 0BSD), ISC, Zlib, Unlicense, Unicode, BSL and CDLA-Permissive expressions; it rejects unapproved licences, unknown sources, wildcard versions and advisories not explicitly justified.
 
-Direct dependencies:
+Selected direct dependencies:
 
 | Crate | Licence | Used for |
 |---|---|---|
@@ -29,12 +29,14 @@ Direct dependencies:
 | `thiserror` | MIT OR Apache-2.0 | Error types |
 | `async-trait` | MIT OR Apache-2.0 | Async methods on port traits used as trait objects |
 | `tracing`, `tracing-subscriber` | MIT | Structured logging |
+| `lettre` | MIT OR Apache-2.0 | Optional SMTP password-reset delivery using Rustls |
+| `tokio-tungstenite` (HTTP dev dependency) | MIT | Real WebSocket API integration tests |
 
 No custom cryptography is implemented; hashing and randomness come from maintained RustCrypto and OS facilities.
 
 ## Frontend (npm)
 
-98 packages reported by `pnpm licenses list`: 83 MIT, 6 Apache-2.0, 2 BSD-2-Clause, 2 BSD-3-Clause, 2 ISC, 2 MPL-2.0, 1 BlueOak-1.0.0. MPL-2.0 is file-level copyleft; it is acceptable for unmodified use as a dependency, but check which packages carry it before distributing a modified copy. Direct dependencies today: React, Vite, TypeScript, Vitest, jsdom, Testing Library, oxlint.
+The application depends on React and React DOM. Development dependencies include Vite, TypeScript, Vitest, jsdom, Testing Library, oxlint, Playwright, and axe-core (`@axe-core/playwright`). `pnpm licenses list` also reports MPL-2.0 packages including axe-core and lightningcss. MPL-2.0 is file-level copyleft; check which packages carry it before distributing a modified copy.
 
 ## Planned services (not yet used)
 

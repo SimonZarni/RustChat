@@ -19,4 +19,4 @@ Authenticate with an opaque random 256-bit session token carried in a cookie. Th
 
 ## Consequences
 
-Revocation and session listing are straightforward and tested. Every authenticated request reads the database (acceptable now; a cache is possible later). Non-browser clients such as bots will need a separate token type (PRD 4.16). The desktop client is assumed to keep cookies in its webview; confirm when it is built. WebSocket authentication is not designed yet and must reuse this mechanism without placing tokens in URLs.
+Revocation and session listing are straightforward and tested. Every authenticated request reads the database (acceptable now; a cache is possible later). Non-browser clients such as bots will need a separate token type (PRD 4.16). The desktop client is assumed to keep cookies in its webview; confirm when it is built. WebSocket authentication reuses this cookie and validates the configured origin, as implemented by [ADR 0009](0009-single-instance-websocket-outbox-dispatch.md).

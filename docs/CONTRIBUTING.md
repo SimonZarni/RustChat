@@ -73,7 +73,7 @@ Run the frontend checks from `frontend/`:
 - Playwright Chromium end-to-end keyboard and accessibility tests
 - Production build
 
-These correspond to `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm --filter @rustchat/web test:e2e` and `pnpm build` from `frontend/`. Install the browser once with `pnpm --filter @rustchat/web exec playwright install chromium`. The automated accessibility scan covers the core workspace and conversation dialog in light mode and the workspace in dark mode; browser keyboard coverage also exercises workspace navigation, community join, settings, administration controls, and modal focus restoration. Manually review screen-reader behavior.
+These correspond to `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm --filter @rustchat/web test:e2e` and `pnpm build` from `frontend/`. Install the browser once with `pnpm --filter @rustchat/web exec playwright install chromium`. axe-core scans cover the sign-in view, authenticated shell, new-conversation dialog, populated message history and channel workspace in light mode, plus the shell in dark mode. Browser keyboard coverage exercises workspace navigation, community join, settings, administration controls, modal focus restoration, and a conversation/message/community/channel workflow using stateful API mocks. Backend APIs are tested separately against PostgreSQL. Manual screen-reader review is still needed; axe and DOM accessibility checks cannot validate spoken output.
 
 Do not report a check as passing unless it was actually executed successfully.
 

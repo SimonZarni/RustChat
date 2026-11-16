@@ -84,7 +84,7 @@ Profile lookup is exact by username. When `discoverable` is false, unrelated use
 - Rate limiting (see below): `429 RATE_LIMITED` with a `Retry-After` header (whole seconds).
 - Failed login is the same `401 INVALID_CREDENTIALS` whether the account exists, the username is malformed or the password is wrong, and unknown accounts still pay the hashing cost. Registration necessarily reveals whether a username is taken (`409 USERNAME_TAKEN`).
 
-**Rate limits** (fixed windows, in-process, defaults in `rustchat_application::ratelimit`):
+**Rate limits** (fixed windows, shared through PostgreSQL in the server deployment):
 
 | Limit | Counts | Default |
 |---|---|---|

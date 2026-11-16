@@ -1110,16 +1110,24 @@ implementation.
 -   **Resource limits:** Small servers can be overwhelmed. Mitigation:
     bounded work, quotas, observability, load tests.
 
-### Decisions to confirm before implementation
+### Resolved decisions
 
--   Initial registration policy: open registration, invitation-only, or
-    administrator-controlled.
--   Whether email verification is mandatory or configurable.
--   Initial supported database and Valkey version ranges.
+-   Initial account policy: username/password accounts, registration open by
+    default and configurable as closed. Optional email supports password
+    recovery when SMTP is configured; email verification is deferred. See
+    [ADR 0005](adr/0005-username-password-accounts-with-configurable-registration.md)
+    and [ADR 0010](adr/0010-optional-email-password-recovery.md).
+-   Production authentication rate limits use shared PostgreSQL storage,
+    while WebSocket fan-out remains single-instance. See
+    [ADR 0006](adr/0006-in-process-rate-limiting-behind-a-port.md) and
+    [ADR 0011](adr/0011-postgresql-shared-auth-rate-limits.md).
+
+### Remaining decisions
+
+-   Supported PostgreSQL version range; PostgreSQL 18 is used in development
+    and integration tests. Valkey is currently unused by the application.
 -   Exact attachment size and storage quota defaults.
--   Initial message edit/delete retention behavior.
 -   Initial community discovery policy.
--   Whether MFA is included in MVP or the first security release.
 -   Supported desktop operating systems for the first desktop release.
 -   E2EE protocol/library selection after a focused security evaluation.
 -   Operational minimum server sizing after baseline load tests.

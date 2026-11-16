@@ -19,4 +19,4 @@ Use SQLx migrations embedded in the server binary and applied by an explicit, id
 
 ## Consequences
 
-Deploy procedures must run `migrate` before starting a new version; the README and compose instructions say so. Every test creates a fresh database through the same migrations, which exercises them continuously. The target of separate migration and application database roles is not done yet. Revisit if self-hosters find the extra step burdensome, for example by adding an opt-in startup flag.
+Deploy procedures must run `migrate` before starting a new version; the README and Compose instructions say so. Every integration test creates a fresh database through the same migrations, which exercises them continuously. The production Compose stack uses separate migration and application database roles; the local development stack keeps setup simpler. Revisit if self-hosters find the explicit migration step burdensome, for example by adding an opt-in startup flag.

@@ -1,11 +1,8 @@
 //! Rate-limit implementations.
 //!
-//! Fixed-window counters held in memory. State is per process: it is lost on
-//! restart and not shared between instances, so a multi-instance deployment
-//! needs a shared implementation of the same port (for example Valkey).
-//!
-//! Memory is bounded: at most `max_keys` entries are kept, so an attacker
-//! presenting endless distinct keys cannot grow the process without limit.
+//! Production uses expiring, PostgreSQL-backed fixed-window counters shared by
+//! servers using the same database. An in-memory implementation remains for
+//! tests; its state is per process and bounded by a maximum key count.
 
 use sha2::{Digest, Sha256};
 use std::{

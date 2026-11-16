@@ -1,6 +1,6 @@
 # Self-hosted deployment baseline
 
-The Compose stack builds the Rust API and web client, serves HTTPS through Caddy, and keeps PostgreSQL off the host network. It is a single-instance baseline: WebSocket fan-out and rate limits are process-local.
+The Compose stack builds the Rust API and web client, serves HTTPS through Caddy, and keeps PostgreSQL off the host network. It is a single-instance baseline: authentication rate limits are shared through PostgreSQL, while WebSocket fan-out and presence remain process-local.
 
 ## First start
 
@@ -9,6 +9,10 @@ The Compose stack builds the Rust API and web client, serves HTTPS through Caddy
 3. Start the database and apply migrations: `docker compose --env-file deployment/.env -f deployment/compose.yml up -d db`, then `docker compose --env-file deployment/.env -f deployment/compose.yml --profile operations run --rm migrate`.
 4. Start the application: `docker compose --env-file deployment/.env -f deployment/compose.yml up -d --build`.
 5. Verify `https://$RUSTCHAT_DOMAIN/healthz` and `/readyz` return `{"status":"ok"}` and register an account. Compose waits for PostgreSQL and server readiness before starting Caddy.
+
+## Configure the first instance administrator
+
+Instance administrators are explicitly assigned by account UUID; community roles do not grant instance-wide authority. After registering the intended administrator account, sign in and call `GET /api/v1/auth/me` to obtain its `user.id`. Put that UUID in `RUSTCHAT_ADMIN_USER_IDS` in `deployment/.env` (comma-separate multiple IDs), then recreate the server with `docker compose --env-file deployment/.env -f deployment/compose.yml up -d --force-recreate server`. The administration panel and `/api/v1/admin/users` become available to those accounts after restart. Keep the ID list limited to trusted operators.
 
 Caddy obtains and renews certificates automatically when public DNS and inbound ports 80/443 reach the host. For local-only evaluation, use `localhost` and configure Caddy's local certificate trust as described by Caddy before relying on secure cookies.
 
