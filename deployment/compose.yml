@@ -29,6 +29,10 @@ services:
       DATABASE_URL: postgres://rustchat_app:${APP_DB_PASSWORD}@db:5432/rustchat
       RUSTCHAT_BIND: 0.0.0.0:8080
       RUSTCHAT_COOKIE_SECURE: "true"
+      # Caddy is the only client of this service (8080 is not published), so
+      # rate limits must key on the X-Forwarded-For entry Caddy appends.
+      # Without this every user shares Caddy's address and one rate-limit bucket.
+      RUSTCHAT_TRUSTED_PROXY_HOPS: "1"
       RUSTCHAT_ALLOWED_ORIGINS: https://${RUSTCHAT_DOMAIN:?set RUSTCHAT_DOMAIN}
       RUSTCHAT_REGISTRATION: ${RUSTCHAT_REGISTRATION:-open}
       RUSTCHAT_DB_MAX_CONNECTIONS: ${RUSTCHAT_DB_MAX_CONNECTIONS:-10}

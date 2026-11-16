@@ -47,6 +47,11 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      # Behind Caddy every request comes from Caddy's address, so without this
+      # setting all users share one rate-limit bucket.
+      - name: Compose keeps trusted proxy hops configured
+        working-directory: .
+        run: grep -q 'RUSTCHAT_TRUSTED_PROXY_HOPS: "1"' deployment/compose.yml
 
   frontend:
     runs-on: ubuntu-latest
