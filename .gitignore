@@ -26,3 +26,6 @@ Thumbs.db
 
 # Tooling
 graphify-out/
+
+# Personal Claude Code settings
+.claude/settings.local.json
