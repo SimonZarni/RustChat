@@ -30,7 +30,7 @@ export function Dialog({ titleId, closeLabel = 'Close', onClose, closeOnBackdrop
     const previousFocus = opener
     const getFocusable = () => Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE))
       .filter((element) => element.getAttribute('aria-hidden') !== 'true')
-    const initialFocus = dialog.querySelector<HTMLElement>('[autofocus]')
+    const initialFocus = dialog.querySelector<HTMLElement>('[data-autofocus], [autofocus]')
       ?? dialog.querySelector<HTMLElement>('input:not([disabled]), textarea:not([disabled]), select:not([disabled])')
       ?? getFocusable()[0]
     initialFocus?.focus()

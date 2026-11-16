@@ -1,5 +1,6 @@
 import { useEffect, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
 import { Dialog } from '../../components/Dialog'
+import { useDialogs } from '../../components/dialogs-context'
 import { api, errorMessage } from '../../lib/api'
 import type { Category, Channel, Community, CommunityInvite, CommunityRole, User } from '../../types'
 import { AuditLogPanel } from '../audit/AuditLogPanel'
@@ -28,6 +29,7 @@ export function CommunityManagerDialog({
   onClose, onError, onCommunityUpdated, onCommunityDeleted, onChannelDeleted, onInviteRevoked,
 }: Props) {
   const communityId = community.id
+  const dialogs = useDialogs()
   const [roles, setRoles] = useState<CommunityRole[]>([])
   const [members, setMembers] = useState<User[]>([])
   const [invites, setInvites] = useState<CommunityInvite[]>([])
@@ -81,7 +83,7 @@ export function CommunityManagerDialog({
   }
 
   async function deleteCommunity() {
-    if (!window.confirm(`Permanently delete ${editName}?`)) return
+    if (!await dialogs.confirm({ title: `Permanently delete ${editName}?`, detail: 'Its channels and their message history are removed for everyone.', confirmLabel: 'Delete community', danger: true })) return
     try {
       await api(`/api/v1/communities/${communityId}`, { method: 'DELETE', body: JSON.stringify({ confirm: true }) })
       onCommunityDeleted()

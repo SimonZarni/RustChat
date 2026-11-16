@@ -71,7 +71,7 @@ export function MessageList({
             const quoted = message.reply_to_message_id ? messages.find((item) => item.id === message.reply_to_message_id) : undefined
             return (
               <article className={`message-row ${own ? 'own' : ''} ${grouped ? 'grouped' : ''}`} key={message.id}>
-                <div className="message-avatar">{own ? initial(user.username) : initial(shortId(message.sender_id))}</div>
+                <div className="message-avatar">{own ? initial(user.username) : initial(profiles[message.sender_id]?.username ?? '?')}</div>
                 <div className="message-content">
                   {!grouped && (
                     <div className="message-meta">
@@ -97,17 +97,15 @@ export function MessageList({
                       })}
                     </div>
                   )}
-                  <button className="reply-button" type="button" onClick={() => onReply(message)}>Reply</button>
-                  {own && deliveredTo > 0 && <small>Delivered to {deliveredTo}</small>}
-                  {own && deliveredTo === 0 && <small>Sent</small>}
-                  {own && readBy > 0 && <small>Seen by {readBy}</small>}
-                  {!message.deleted_at && own && (
-                    <div className="message-actions">
-                      <button onClick={() => onEdit(message)}>Edit</button>
-                      <button onClick={() => onDelete(message)}>Delete</button>
-                    </div>
-                  )}
-                  {message.edited_at && <small>edited</small>}
+                  <div className="message-footer">
+                    <button className="message-link" type="button" onClick={() => onReply(message)}>Reply</button>
+                    {!message.deleted_at && own && <button className="message-link" type="button" onClick={() => onEdit(message)}>Edit</button>}
+                    {!message.deleted_at && own && <button className="message-link danger" type="button" onClick={() => onDelete(message)}>Delete</button>}
+                    {own && deliveredTo > 0 && <small>Delivered to {deliveredTo}</small>}
+                    {own && deliveredTo === 0 && <small>Sent</small>}
+                    {own && readBy > 0 && <small>Seen by {readBy}</small>}
+                    {message.edited_at && <small>edited</small>}
+                  </div>
                 </div>
               </article>
             )

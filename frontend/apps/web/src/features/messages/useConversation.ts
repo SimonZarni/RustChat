@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { api, errorMessage } from '../../lib/api'
 import { mergeBySequence } from '../../lib/format'
 import { uuid7 } from '../../lib/ids'
+import { useDialogs } from '../../components/dialogs-context'
 import type { Message, MessageReaction, ReadCursor, User } from '../../types'
 
 const toCursorMap = (cursors: ReadCursor[]) => Object.fromEntries(cursors.map((cursor) => [cursor.user_id, cursor.sequence]))
@@ -16,6 +17,7 @@ export function useConversation(
   socketRef: MutableRefObject<WebSocket | null>,
   onError: (message: string) => void,
 ) {
+  const dialogs = useDialogs()
   const [messages, setMessages] = useState<Message[]>([])
   const [loadedConversationId, setLoadedConversationId] = useState<string | null>(null)
   const [older, setOlder] = useState<{ conversationId: string | null; cursor: number | null }>({ conversationId: null, cursor: null })
@@ -202,21 +204,21 @@ export function useConversation(
   }, [activeId, replyTo, mergeMessages, markRead, onError])
 
   const edit = useCallback(async (message: Message) => {
-    const updated = window.prompt('Edit message', message.content)
+    const updated = await dialogs.prompt({ title: 'Edit message', label: 'Message', initialValue: message.content, multiline: true, maxLength: 4000, confirmLabel: 'Save' })
     if (updated === null || !updated.trim()) return
     try {
       const result = await api<{ message: Message }>(`/api/v1/conversations/${activeId}/messages/${message.id}`, { method: 'PATCH', body: JSON.stringify({ content: updated.trim() }) })
       mergeMessages([result.message])
     } catch (cause) { onError(errorMessage(cause, 'Could not edit message')) }
-  }, [activeId, mergeMessages, onError])
+  }, [activeId, dialogs, mergeMessages, onError])
 
   const remove = useCallback(async (message: Message) => {
-    if (!window.confirm('Delete this message?')) return
+    if (!await dialogs.confirm({ title: 'Delete this message?', detail: 'This removes its text for everyone in the conversation.', confirmLabel: 'Delete', danger: true })) return
     try {
       const result = await api<{ message: Message }>(`/api/v1/conversations/${activeId}/messages/${message.id}`, { method: 'DELETE' })
       mergeMessages([result.message])
     } catch (cause) { onError(errorMessage(cause, 'Could not delete message')) }
-  }, [activeId, mergeMessages, onError])
+  }, [activeId, dialogs, mergeMessages, onError])
 
   const toggleReaction = useCallback(async (message: Message, emoji: string) => {
     const key = `${message.id}:${emoji}`

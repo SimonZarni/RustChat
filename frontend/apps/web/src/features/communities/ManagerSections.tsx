@@ -1,4 +1,5 @@
 import { useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
+import { useDialogs } from '../../components/dialogs-context'
 import { api, errorMessage } from '../../lib/api'
 import type { Category, Channel, CommunityInvite, User } from '../../types'
 
@@ -43,6 +44,7 @@ export function CategoriesSection({ communityId, categories, setCategories, setC
   setCategories: Dispatch<SetStateAction<Category[]>>
   setChannels: Dispatch<SetStateAction<Channel[]>>
 }) {
+  const dialogs = useDialogs()
   const [newName, setNewName] = useState('')
 
   async function create(event: FormEvent<HTMLFormElement>) {
@@ -55,7 +57,7 @@ export function CategoriesSection({ communityId, categories, setCategories, setC
   }
 
   async function rename(category: Category) {
-    const name = window.prompt('Category name', category.name)?.trim()
+    const name = (await dialogs.prompt({ title: 'Rename category', label: 'Category name', initialValue: category.name, maxLength: 64 }))?.trim()
     if (!name) return
     try {
       const result = await api<{ category: Category }>(`/api/v1/communities/${communityId}/categories/${category.id}`, { method: 'PATCH', body: JSON.stringify({ name, position: category.position }) })
@@ -64,7 +66,7 @@ export function CategoriesSection({ communityId, categories, setCategories, setC
   }
 
   async function remove(category: Category) {
-    if (!window.confirm(`Delete category ${category.name}? Its channels will become uncategorized.`)) return
+    if (!await dialogs.confirm({ title: `Delete category ${category.name}?`, detail: 'Its channels will become uncategorized.', confirmLabel: 'Delete', danger: true })) return
     try {
       await api(`/api/v1/communities/${communityId}/categories/${category.id}`, { method: 'DELETE' })
       setCategories((current) => current.filter((item) => item.id !== category.id))
@@ -97,6 +99,7 @@ export function ChannelsSection({ communityId, channels, categories, setChannels
   setChannels: Dispatch<SetStateAction<Channel[]>>
   onChannelDeleted: (conversationId: string) => void
 }) {
+  const dialogs = useDialogs()
   async function update(channel: Channel, changes: Partial<Pick<Channel, 'name' | 'category_id'>>, failure: string) {
     try {
       const updated = await api<{ channel: Channel }>(`/api/v1/communities/${communityId}/channels/${channel.id}`, {
@@ -108,13 +111,13 @@ export function ChannelsSection({ communityId, channels, categories, setChannels
   }
 
   async function rename(channel: Channel) {
-    const name = window.prompt('Channel name', channel.name)
+    const name = await dialogs.prompt({ title: 'Rename channel', label: 'Channel name', initialValue: channel.name, maxLength: 64 })
     if (name === null) return
     await update(channel, { name }, 'Could not rename channel')
   }
 
   async function remove(channel: Channel) {
-    if (!window.confirm(`Delete #${channel.name} and its message history?`)) return
+    if (!await dialogs.confirm({ title: `Delete #${channel.name}?`, detail: 'Its message history is deleted for everyone.', confirmLabel: 'Delete', danger: true })) return
     try {
       await api(`/api/v1/communities/${communityId}/channels/${channel.id}`, { method: 'DELETE' })
       setChannels((current) => current.filter((item) => item.id !== channel.id))
@@ -149,8 +152,9 @@ export function MembersSection({ communityId, ownerId, currentUserId, members, s
   selectedMemberId: string
   onMemberRemoved: (memberId: string) => void
 }) {
+  const dialogs = useDialogs()
   async function remove(member: User) {
-    if (!window.confirm(`Remove ${member.username} from this community?`)) return
+    if (!await dialogs.confirm({ title: `Remove ${member.username} from this community?`, confirmLabel: 'Remove', danger: true })) return
     try {
       await api(`/api/v1/communities/${communityId}/members/${member.id}`, { method: 'DELETE' })
       setMembers((current) => current.filter((item) => item.id !== member.id))

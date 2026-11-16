@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { DialogProvider } from './components/Dialogs'
 import { AccountFooter } from './features/account/AccountFooter'
 import { AuthScreen } from './features/auth/AuthScreen'
 import { VerifyEmailScreen } from './features/auth/VerifyEmailScreen'
@@ -15,8 +16,12 @@ import { readVerifyEmailToken } from './lib/links'
 import { useTheme } from './lib/useTheme'
 import type { Conversation, User } from './types'
 
-/** Application shell: session lifecycle and the layout that wires the feature modules together. */
 export default function App() {
+  return <DialogProvider><Shell /></DialogProvider>
+}
+
+/** Application shell: session lifecycle and the layout that wires the feature modules together. */
+function Shell() {
   const [theme, setTheme] = useTheme()
   const [user, setUser] = useState<User | null>(null)
   const [checkingSession, setCheckingSession] = useState(true)

@@ -1,4 +1,5 @@
 import { useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
+import { useDialogs } from '../../components/dialogs-context'
 import { api, errorMessage } from '../../lib/api'
 import { ROLE_PERMISSIONS } from '../../lib/permissions'
 import type { Channel, CommunityRole, User } from '../../types'
@@ -34,6 +35,7 @@ export function RolesSection({
   selectedRoleId, setSelectedRoleId, selectedMemberId, setSelectedMemberId,
   overrideChannelId, setOverrideChannelId, onError,
 }: Props) {
+  const dialogs = useDialogs()
   const [newName, setNewName] = useState('')
   const [newPermissions, setNewPermissions] = useState(193)
   const [overrideAllow, setOverrideAllow] = useState(0)
@@ -61,7 +63,7 @@ export function RolesSection({
   }
 
   async function remove(role: CommunityRole) {
-    if (role.is_default || !window.confirm(`Delete the ${role.name} role?`)) return
+    if (role.is_default || !await dialogs.confirm({ title: `Delete the ${role.name} role?`, detail: 'Members lose the permissions it granted.', confirmLabel: 'Delete role', danger: true })) return
     try {
       await api(`/api/v1/communities/${communityId}/roles/${role.id}`, { method: 'DELETE' })
       setRoles((current) => current.filter((item) => item.id !== role.id))

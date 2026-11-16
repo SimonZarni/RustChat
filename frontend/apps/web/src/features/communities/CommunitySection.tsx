@@ -1,4 +1,5 @@
 import { lazy, Suspense, useState } from 'react'
+import { useDialogs } from '../../components/dialogs-context'
 import { api, errorMessage } from '../../lib/api'
 import type { Community, User } from '../../types'
 // The management dialog is only needed by people who open it, so it loads on demand.
@@ -22,6 +23,7 @@ type Props = {
 /** Sidebar block listing communities and channels, plus the dialogs that manage them. */
 export function CommunitySection({ state, user, activeId, onOpenConversation, onClearActive, onChannelDeleted, onError }: Props) {
   const { communities, selectedCommunityId, channels, categories } = state
+  const dialogs = useDialogs()
   const [dialog, setDialog] = useState<Dialogs>(null)
   const [createdInviteCode, setCreatedInviteCode] = useState('')
   const [inviteCopied, setInviteCopied] = useState(false)
@@ -59,7 +61,7 @@ export function CommunitySection({ state, user, activeId, onOpenConversation, on
   }
 
   async function leave() {
-    if (!selectedCommunityId || !window.confirm('Leave this community?')) return
+    if (!selectedCommunityId || !await dialogs.confirm({ title: 'Leave this community?', detail: 'You will need a new invitation to rejoin.', confirmLabel: 'Leave', danger: true })) return
     try {
       await api(`/api/v1/communities/${selectedCommunityId}/members`, { method: 'DELETE' })
       selectAfterRemoval(selectedCommunityId)

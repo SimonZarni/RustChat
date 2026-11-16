@@ -1,5 +1,5 @@
 import { displayName } from '../../lib/format'
-import { initial, shortId } from '../../lib/ids'
+import { initial } from '../../lib/ids'
 import type { Conversation, User } from '../../types'
 
 type Props = {
@@ -26,7 +26,7 @@ export function ConversationList({ conversations, activeId, userId, profiles, pr
         const online = conversation.kind === 'direct' && conversation.members.some((member) => member !== userId && presence[member])
         return (
           <button key={conversation.id} className={`conversation-item ${activeId === conversation.id ? 'selected' : ''}`} onClick={() => onSelect(conversation.id)}>
-            <span className={`conversation-avatar ${conversation.kind}`}>{conversation.kind === 'group' ? 'G' : initial(shortId(conversation.members.find((member) => member !== userId) ?? conversation.id))}</span>
+            <span className={`conversation-avatar ${conversation.kind}`}>{conversation.kind === 'group' ? 'G' : initial(profiles[conversation.members.find((member) => member !== userId) ?? '']?.username ?? '?')}</span>
             <span className="conversation-summary">
               <strong>{displayName(conversation, userId, profiles)}</strong>
               {online && <i className="presence-dot" role="img" aria-label="Online" title="Online" />}
