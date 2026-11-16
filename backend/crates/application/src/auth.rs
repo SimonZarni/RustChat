@@ -178,6 +178,19 @@ impl AuthService {
         Ok(users)
     }
 
+    /// Instance administration history, newest first. Administrators only.
+    pub async fn list_instance_audit(
+        &self,
+        actor: UserId,
+        before: Option<rustchat_domain::identity::AuditEventId>,
+        limit: usize,
+    ) -> Result<crate::ports::AuditPage, AppError> {
+        self.require_instance_admin(actor)?;
+        self.users
+            .list_admin_audit(before, limit.clamp(1, 100))
+            .await
+    }
+
     pub async fn set_user_suspended(
         &self,
         actor: UserId,

@@ -76,6 +76,8 @@ impl CapturedEmail {
 }
 
 pub struct Options {
+    /// Accounts treated as instance administrators.
+    pub admin_user_ids: std::collections::HashSet<rustchat_domain::identity::UserId>,
     pub email: Option<CapturedEmail>,
     /// Enforce general API budgets with these limits when set.
     pub api_limits: Option<ApiRateLimitConfig>,
@@ -91,6 +93,7 @@ impl Default for Options {
             window: time::Duration::hours(1),
         };
         Self {
+            admin_user_ids: Default::default(),
             email: None,
             api_limits: None,
             lifecycle: SessionLifecycle::default(),
@@ -120,7 +123,8 @@ pub fn app(pool: PgPool, options: Options) -> Router {
             rate_limits: options.rate_limits,
         },
     )
-    .with_session_lifecycle(options.lifecycle);
+    .with_session_lifecycle(options.lifecycle)
+    .with_instance_admins(options.admin_user_ids);
     let auth = match options.email {
         Some(email) => auth.with_email_delivery(Arc::new(email), ORIGIN.to_owned()),
         None => auth,
@@ -254,6 +258,25 @@ pub async fn register(app: &Router, username: &str) -> Reply {
 /// Registers and logs in; returns the session cookie pair.
 pub async fn sign_in(app: &Router, username: &str) -> String {
     assert_eq!(register(app, username).await.status, StatusCode::CREATED);
+    let reply = call(
+        app,
+        Method::POST,
+        "/api/v1/auth/login",
+        Some(json!({"username": username, "password": PASSWORD})),
+        None,
+    )
+    .await;
+    assert_eq!(
+        reply.status,
+        StatusCode::OK,
+        "login failed: {:?}",
+        reply.json
+    );
+    reply.new_session_cookie().expect("session cookie")
+}
+
+/// Logs in an already registered account; returns the session cookie pair.
+pub async fn sign_in_existing(app: &Router, username: &str) -> String {
     let reply = call(
         app,
         Method::POST,

@@ -205,6 +205,19 @@ impl CommunityService {
             .await
     }
 
+    /// Audit history of one community, newest first, for callers allowed to manage it.
+    pub async fn list_audit(
+        &self,
+        caller: UserId,
+        community: CommunityId,
+        before: Option<rustchat_domain::identity::AuditEventId>,
+        limit: usize,
+    ) -> Result<crate::ports::AuditPage, AppError> {
+        self.repo
+            .list_audit(caller, community, before, limit.clamp(1, 100))
+            .await
+    }
+
     pub async fn list_invites(
         &self,
         caller: UserId,

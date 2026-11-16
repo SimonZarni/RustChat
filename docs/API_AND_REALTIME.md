@@ -48,6 +48,7 @@ Instance administrators are assigned through the comma-separated `RUSTCHAT_ADMIN
 | Method and path | Auth | Success | Notes |
 |---|---|---|---|
 | `GET /api/v1/admin/users` | configured instance admin | `200 {"users":[...]}` | Newest 100 accounts; response omits email and credential data |
+| `GET /api/v1/admin/audit?before={event_id}&limit=50` | configured instance admin | `200 {"events":[...],"next_cursor":...}` | Suspension and restoration history, newest first, same event shape and paging as the community audit; non-admin callers receive `403` |
 | `PUT /api/v1/admin/users/{user_id}/suspension` | configured instance admin | `200 {"user":...}` | Body `{"suspended":true}` or `false`; self/admin targets return `409`; non-admin callers receive `403` |
 
 | Method and path | Auth | Success | Notes |
@@ -147,7 +148,7 @@ The member profile response is the supported way for a conversation participant 
 | `POST /api/v1/communities/{id}/ownership` | `204` | Transfer ownership to an existing member |
 | `DELETE /api/v1/communities/{id}` | `204` | Delete community with explicit name confirmation; audit record is retained |
 
-The current permission evaluator combines member role grants, then channel allows, then channel denies (deny wins). A permission bit cannot be both allowed and denied in one override. Custom roles are ordered from highest rank (position 1) to lowest; delegated managers can edit, delete, assign, or remove only roles below their highest assigned custom role, cannot move a role to their rank or above, and cannot grant permissions they do not hold. Community owners can manage all roles. Community lifecycle and membership/role/channel mutations are audited. Categories can be created, renamed, reordered and deleted in the web client; channels can be assigned or moved between categories. The web client does not yet expose every administrative API.
+The current permission evaluator combines member role grants, then channel allows, then channel denies (deny wins). A permission bit cannot be both allowed and denied in one override. Custom roles are ordered from highest rank (position 1) to lowest; delegated managers can edit, delete, assign, or remove only roles below their highest assigned custom role, cannot move a role to their rank or above, and cannot grant permissions they do not hold. Community owners can manage all roles. Audit entries are written for community settings changes, ownership transfers, community deletion, member removal and invitation creation and revocation; role, category and channel changes are not audited yet. The history is readable at `GET /api/v1/communities/{id}/audit?before={event_id}&limit=50` (newest first, default 50, maximum 100; `before` is the `next_cursor` of the previous page) by callers allowed to manage the community, and everyone else receives `404`. Each event is `{id, event_type, actor, target, details, created_at}` with `actor`/`target` as `{id, username}` or `null`. The log of a deleted community is retained but no longer reachable through this route. Categories can be created, renamed, reordered and deleted in the web client; channels can be assigned or moved between categories. The web client does not yet expose every administrative API.
 
 ### Implemented: plain-text messages
 

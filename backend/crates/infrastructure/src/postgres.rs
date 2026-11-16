@@ -8,9 +8,10 @@ use async_trait::async_trait;
 use rustchat_application::{
     error::AppError,
     ports::{
-        ActiveSession, AdminUser, CommunityRepository, ConversationRepository, CreateUserOutcome,
-        EmailStatus, MessageRepository, NewSession, NewUser, SessionRepository, TokenDigest,
-        UserCredentials, UserRepository, VerifyEmailOutcome,
+        ActiveSession, AdminUser, AuditEvent, AuditPage, AuditUser, CommunityRepository,
+        ConversationRepository, CreateUserOutcome, EmailStatus, MessageRepository, NewSession,
+        NewUser, SessionRepository, TokenDigest, UserCredentials, UserRepository,
+        VerifyEmailOutcome,
     },
 };
 use rustchat_domain::{
@@ -92,6 +93,38 @@ fn session_from(row: &PgRow) -> Result<Session, AppError> {
         expires_at: row
             .try_get::<OffsetDateTime, _>("expires_at")
             .map_err(db_error)?,
+    })
+}
+
+/// Builds a page from rows fetched with one extra row to detect a following page.
+fn audit_page(rows: &[PgRow], limit: usize) -> Result<AuditPage, AppError> {
+    let mut events = Vec::with_capacity(rows.len().min(limit));
+    for row in rows.iter().take(limit) {
+        let named = |id_column: &str, name_column: &str| -> Result<Option<AuditUser>, AppError> {
+            let id: Option<Uuid> = row.try_get(id_column).map_err(db_error)?;
+            let name: Option<String> = row.try_get(name_column).map_err(db_error)?;
+            Ok(id.zip(name).map(|(id, username)| AuditUser {
+                id: UserId::from_uuid(id),
+                username,
+            }))
+        };
+        events.push(AuditEvent {
+            id: rustchat_domain::identity::AuditEventId::from_uuid(
+                row.try_get("id").map_err(db_error)?,
+            ),
+            event_type: row.try_get("event_type").map_err(db_error)?,
+            actor: named("actor_user_id", "actor_username")?,
+            target: named("target_user_id", "target_username")?,
+            details: row.try_get("details").map_err(db_error)?,
+            created_at: row.try_get("created_at").map_err(db_error)?,
+        });
+    }
+    let next_cursor = (rows.len() > limit)
+        .then(|| events.last().map(|event| event.id))
+        .flatten();
+    Ok(AuditPage {
+        events,
+        next_cursor,
     })
 }
 
@@ -617,6 +650,31 @@ impl UserRepository for PgUserRepository {
             }
             Err(error) => Err(db_error(error)),
         }
+    }
+
+    async fn list_admin_audit(
+        &self,
+        before: Option<rustchat_domain::identity::AuditEventId>,
+        limit: usize,
+    ) -> Result<AuditPage, AppError> {
+        let rows = sqlx::query(
+            "SELECT a.id, a.event_type, a.created_at, a.details, \
+                    a.actor_user_id, actor.username AS actor_username, \
+                    a.target_user_id, target.username AS target_username \
+             FROM instance_admin_audit_log a \
+             LEFT JOIN users actor ON actor.id = a.actor_user_id \
+             LEFT JOIN users target ON target.id = a.target_user_id \
+             WHERE $1::uuid IS NULL \
+                OR (a.created_at, a.id) < (SELECT created_at, id FROM instance_admin_audit_log WHERE id = $1) \
+             ORDER BY a.created_at DESC, a.id DESC \
+             LIMIT $2",
+        )
+        .bind(before.map(|id| id.as_uuid()))
+        .bind(i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_error)?;
+        audit_page(&rows, limit)
     }
 
     async fn list_admin_users(&self, limit: i64) -> Result<Vec<AdminUser>, AppError> {
@@ -1241,6 +1299,44 @@ fn role_from(row: &PgRow) -> Result<Role, AppError> {
 
 #[async_trait]
 impl CommunityRepository for PgCommunityRepository {
+    async fn list_audit(
+        &self,
+        caller: UserId,
+        community: CommunityId,
+        before: Option<rustchat_domain::identity::AuditEventId>,
+        limit: usize,
+    ) -> Result<AuditPage, AppError> {
+        // 2 = MANAGE_COMMUNITY. Hidden from anyone without it, like other management reads.
+        let permitted: bool = sqlx::query_scalar("SELECT community_has_permission($1, $2, 2)")
+            .bind(caller.as_uuid())
+            .bind(community.as_uuid())
+            .fetch_one(&self.pool)
+            .await
+            .map_err(db_error)?;
+        if !permitted {
+            return Err(AppError::NotFound);
+        }
+        let rows = sqlx::query(
+            "SELECT a.id, a.event_type, a.created_at, a.details, \
+                    a.actor_id AS actor_user_id, actor.username AS actor_username, \
+                    NULL::uuid AS target_user_id, NULL::text AS target_username \
+             FROM community_audit_log a \
+             LEFT JOIN users actor ON actor.id = a.actor_id \
+             WHERE a.community_id = $2 \
+               AND ($1::uuid IS NULL \
+                    OR (a.created_at, a.id) < (SELECT created_at, id FROM community_audit_log WHERE id = $1)) \
+             ORDER BY a.created_at DESC, a.id DESC \
+             LIMIT $3",
+        )
+        .bind(before.map(|id| id.as_uuid()))
+        .bind(community.as_uuid())
+        .bind(i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_error)?;
+        audit_page(&rows, limit)
+    }
+
     async fn create(
         &self,
         owner: UserId,

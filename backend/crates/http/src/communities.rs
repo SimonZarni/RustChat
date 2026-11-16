@@ -432,6 +432,20 @@ pub async fn create_invite(
     ))
 }
 
+pub async fn audit_log(
+    State(state): State<AppState>,
+    AuthUser(auth): AuthUser,
+    Path(raw): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<crate::admin::AuditQuery>,
+) -> Result<Json<crate::admin::AuditEnvelope>, ApiError> {
+    let (before, limit) = query.parse()?;
+    let page = state
+        .communities
+        .list_audit(auth.user.id, community_id(&raw)?, before, limit)
+        .await?;
+    Ok(Json(page.into()))
+}
+
 pub async fn list_invites(
     State(state): State<AppState>,
     AuthUser(auth): AuthUser,

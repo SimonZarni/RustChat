@@ -59,6 +59,33 @@ pub struct ActiveSession {
     pub via_previous_token: bool,
 }
 
+/// A user as named in an audit entry. The username is as currently stored, so a
+/// deleted account appears under its tombstone name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditUser {
+    pub id: UserId,
+    pub username: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AuditEvent {
+    pub id: rustchat_domain::identity::AuditEventId,
+    pub event_type: String,
+    pub actor: Option<AuditUser>,
+    /// The account acted upon (instance audit only).
+    pub target: Option<AuditUser>,
+    pub details: serde_json::Value,
+    pub created_at: OffsetDateTime,
+}
+
+/// One newest-first page of audit events; `next_cursor` is the id to pass as
+/// `before` to continue, present only when more events exist.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AuditPage {
+    pub events: Vec<AuditEvent>,
+    pub next_cursor: Option<rustchat_domain::identity::AuditEventId>,
+}
+
 /// The recovery email address of an account and whether its owner confirmed it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmailStatus {
@@ -174,6 +201,12 @@ pub trait UserRepository: Send + Sync {
         now: OffsetDateTime,
     ) -> Result<bool, AppError>;
     async fn list_admin_users(&self, limit: i64) -> Result<Vec<AdminUser>, AppError>;
+    /// Instance administration audit events, newest first.
+    async fn list_admin_audit(
+        &self,
+        before: Option<rustchat_domain::identity::AuditEventId>,
+        limit: usize,
+    ) -> Result<AuditPage, AppError>;
     async fn set_user_suspended(
         &self,
         actor: UserId,
@@ -307,6 +340,15 @@ pub trait MessageRepository: Send + Sync {
 
 #[async_trait]
 pub trait CommunityRepository: Send + Sync {
+    /// Community audit events, newest first. Requires the community-management
+    /// permission; callers without it get `NotFound`.
+    async fn list_audit(
+        &self,
+        caller: UserId,
+        community: CommunityId,
+        before: Option<rustchat_domain::identity::AuditEventId>,
+        limit: usize,
+    ) -> Result<AuditPage, AppError>;
     async fn create(
         &self,
         owner: UserId,

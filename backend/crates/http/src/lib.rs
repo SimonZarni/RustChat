@@ -200,6 +200,7 @@ pub struct CommunityEvent {
 pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/admin/users", get(admin::list_users))
+        .route("/admin/audit", get(admin::audit_log))
         .route(
             "/admin/users/{user_id}/suspension",
             axum::routing::put(admin::set_suspension),
@@ -253,6 +254,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/communities/{community_id}",
             patch(communities::update_settings).delete(communities::delete_community),
+        )
+        .route(
+            "/communities/{community_id}/audit",
+            get(communities::audit_log),
         )
         .route(
             "/communities/{community_id}/ownership",

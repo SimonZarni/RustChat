@@ -378,6 +378,17 @@ impl UserRepository for FakeStore {
         Ok(false)
     }
 
+    async fn list_admin_audit(
+        &self,
+        _before: Option<rustchat_domain::identity::AuditEventId>,
+        _limit: usize,
+    ) -> Result<AuditPage, AppError> {
+        Ok(AuditPage {
+            events: Vec::new(),
+            next_cursor: None,
+        })
+    }
+
     async fn list_admin_users(&self, limit: i64) -> Result<Vec<AdminUser>, AppError> {
         let store = self.0.lock().unwrap();
         Ok(store

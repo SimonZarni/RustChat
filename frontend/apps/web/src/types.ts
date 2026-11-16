@@ -50,3 +50,13 @@ export type InstanceUser = {
 }
 export type ReadCursor = { user_id: string; sequence: number }
 export type EmailStatus = { email: string | null; verified: boolean }
+export type AuditUser = { id: string; username: string }
+export type AuditEvent = {
+  id: string
+  event_type: string
+  actor: AuditUser | null
+  target: AuditUser | null
+  details: Record<string, unknown>
+  created_at: string
+}
+export type AuditPage = { events: AuditEvent[]; next_cursor: string | null }

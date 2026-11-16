@@ -107,7 +107,7 @@ Messages may reference a parent message for replies. The composite foreign key b
 
 **Communities** use `communities`, `community_members`, `community_roles`, `community_member_roles`, `community_categories`, `community_channels`, `channel_role_overrides`, and `community_invites`. Categories have stable per-community order; channel assignment is nullable and checked against the community. Deleting a category preserves its channels and makes them uncategorized. Text channels reuse conversations for membership and message history. `community_audit_log` records settings changes, member removals, ownership transfers and community deletion; the community foreign key becomes null on deletion so the record remains.
 
-**Instance administration** uses `instance_admin_audit_log` to record actual suspend and restore transitions with actor, target, event, time and details. Suspension updates `users.suspended_at`, revokes active sessions and inserts the audit event in one transaction. There is no API for browsing these instance audit rows yet.
+**Instance administration** uses `instance_admin_audit_log` to record actual suspend and restore transitions with actor, target, event, time and details. Suspension updates `users.suspended_at`, revokes active sessions and inserts the audit event in one transaction. Administrators page through them with `GET /api/v1/admin/audit`, and managers read a community's rows with `GET /api/v1/communities/{id}/audit`; both use keyset paging on `(created_at, id)`.
 
 ## 5. Relationships (conceptual)
 

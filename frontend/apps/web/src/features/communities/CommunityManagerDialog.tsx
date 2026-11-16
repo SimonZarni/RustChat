@@ -2,6 +2,7 @@ import { useEffect, useState, type Dispatch, type FormEvent, type SetStateAction
 import { Dialog } from '../../components/Dialog'
 import { api, errorMessage } from '../../lib/api'
 import type { Category, Channel, Community, CommunityInvite, CommunityRole, User } from '../../types'
+import { AuditLogPanel } from '../audit/AuditLogPanel'
 import { CategoriesSection, ChannelsSection, InvitesSection, MembersSection } from './ManagerSections'
 import { RolesSection } from './RolesSection'
 
@@ -105,6 +106,7 @@ export function CommunityManagerDialog({
         selectedRoleId={selectedRoleId} setSelectedRoleId={setSelectedRoleId} selectedMemberId={selectedMemberId} setSelectedMemberId={setSelectedMemberId}
         overrideChannelId={overrideChannelId} setOverrideChannelId={setOverrideChannelId} onError={onError}
       />
+      <AuditLogPanel path={`/api/v1/communities/${communityId}/audit`} title="Audit history" onError={onError} />
       {isOwner && (
         <section className="manager-section">
           <h3>Ownership</h3>

@@ -220,6 +220,13 @@ mod tests {
         ) -> Result<(), AppError> {
             Ok(())
         }
+        async fn list_admin_audit(
+            &self,
+            _: Option<rustchat_domain::identity::AuditEventId>,
+            _: usize,
+        ) -> Result<crate::ports::AuditPage, AppError> {
+            unreachable!("not used by conversation tests")
+        }
         async fn email_status(&self, _: UserId) -> Result<crate::ports::EmailStatus, AppError> {
             unreachable!("not used by conversation tests")
         }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, errorMessage } from '../../lib/api'
 import type { InstanceUser } from '../../types'
+import { AuditLogPanel } from '../audit/AuditLogPanel'
 
 function accountState(item: InstanceUser): string {
   return item.deleted_at ? 'Deleted' : item.suspended_at ? 'Suspended' : item.deactivated_at ? 'Deactivated' : 'Active'
@@ -49,6 +50,7 @@ export function InstanceAdminSection({ onError }: { onError: (message: string) =
             </div>
           ))}
         </div>
+        <AuditLogPanel path="/api/v1/admin/audit" title="Administration history" onError={onError} />
       </section>
     </details>
   )
