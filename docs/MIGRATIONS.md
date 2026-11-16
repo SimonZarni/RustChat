@@ -27,4 +27,4 @@ Twenty-four migrations currently exist: `0001_identity.sql` (users and sessions)
 
 ## 5. Open items
 
-- Decide the PostgreSQL version range to support (the dev compose file uses `postgres:18`).
+- PostgreSQL 17 and 18 are supported (the two newest majors); CI runs the backend suite and the backup check on both, and the Compose files default to 18. Drop the oldest major only after announcing it and when a feature needs the newer one.

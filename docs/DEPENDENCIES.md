@@ -46,7 +46,7 @@ Licences in this table are stated from general knowledge and have **not** been v
 
 | Service | Licence | Note |
 |---|---|---|
-| PostgreSQL 18 (container image) | PostgreSQL Licence | In use for development |
+| PostgreSQL 17 and 18 (container images) | PostgreSQL Licence | Supported versions; 18 is the default in the Compose files and 17 is tested in CI |
 | Valkey 9 (container image) | BSD-3-Clause | Started by the dev compose file; not used by the backend yet |
 | Garage | AGPL-3.0 | Planned for attachments (Phase 2). Run as an unmodified, separate service, AGPL does not extend to RustChat's own code; confirm this and record the decision before adoption |
 | LiveKit | Apache-2.0 | Planned for voice (Phase 2) |

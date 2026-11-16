@@ -17,14 +17,20 @@ concurrency:
 
 jobs:
   backend:
+    # The two newest PostgreSQL major versions are supported (see the PRD).
+    name: backend (PostgreSQL ${{ matrix.postgres }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["17", "18"]
     defaults:
       run:
         working-directory: backend
     # Integration tests (sqlx::test) run against a real PostgreSQL.
     services:
       postgres:
-        image: postgres:18
+        image: postgres:${{ matrix.postgres }}
         env:
           POSTGRES_PASSWORD: postgres
         ports:
@@ -118,10 +124,15 @@ jobs:
   # through the API, back it up, and restore the dump into a scratch database
   # with the same checks operators run (deployment/verify-backup.sh).
   restore-check:
+    name: restore-check (PostgreSQL ${{ matrix.postgres }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["17", "18"]
     services:
       postgres:
-        image: postgres:18
+        image: postgres:${{ matrix.postgres }}
         env:
           POSTGRES_USER: rustchat
           POSTGRES_PASSWORD: ci-superuser
@@ -141,7 +152,7 @@ jobs:
       PGDATABASE: rustchat
       # The runner's PostgreSQL client may be older than the server; dump and restore
       # with the matching version.
-      RUSTCHAT_PG_PREFIX: docker run --rm -i --network host -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGDATABASE postgres:18
+      RUSTCHAT_PG_PREFIX: docker run --rm -i --network host -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGDATABASE postgres:${{ matrix.postgres }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

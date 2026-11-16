@@ -169,7 +169,7 @@ This starts PostgreSQL and Valkey bound to `127.0.0.1` only. The backend uses Po
 
 #### Alternative: native PostgreSQL on Windows (no Docker)
 
-Docker is only one way to get a PostgreSQL 18. The backend needs nothing from Docker itself, so a native install works equally well (verified on Windows 11 with the full backend test suite):
+Docker is only one way to get a PostgreSQL (versions 17 and 18 are supported; the examples use 18). The backend needs nothing from Docker itself, so a native install works equally well (verified on Windows 11 with the full backend test suite):
 
 ```powershell
 # Elevated PowerShell. Choose your own superuser password; keep it out of the repository.
