@@ -22,7 +22,7 @@ Security-sensitive features must be reviewed and tested before release.
 - Never store plaintext or reversibly encrypted passwords.
 - Use secure session identifiers generated with a cryptographically secure random source.
 - Support session revocation and expiration.
-- Consider WebAuthn and TOTP as MFA options.
+- TOTP two-step verification is implemented (optional, enabled by a server key); WebAuthn remains a candidate for later.
 - Apply rate limits and abuse controls to authentication endpoints.
 - Avoid account-enumeration leaks in public authentication responses.
 

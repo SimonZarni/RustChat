@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { api, errorMessage } from '../../lib/api'
-import type { User } from '../../types'
+import type { LoginResponse, User } from '../../types'
 
 type Props = {
   onAuthenticated: (user: User) => void
@@ -22,6 +22,9 @@ export function AuthScreen({ onAuthenticated, initialNotice = '' }: Props) {
   const [email, setEmail] = useState('')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  /** Set when the password was accepted and a code from the second factor is still needed. */
+  const [mfaToken, setMfaToken] = useState<string | null>(null)
+  const [mfaCode, setMfaCode] = useState('')
   const [notice, setNotice] = useState(initialNotice)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -33,12 +36,24 @@ export function AuthScreen({ onAuthenticated, initialNotice = '' }: Props) {
         await api('/api/v1/auth/register', { method: 'POST', body: JSON.stringify({ username, password, email }) })
         setAuthMode('login'); setNotice('Account created. Sign in with your new credentials.')
       } else {
-        const result = await api<{ user: User }>('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) })
+        const result = await api<LoginResponse>('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) })
         setPassword('')
-        onAuthenticated(result.user)
+        if ('mfa_required' in result) setMfaToken(result.mfa_token)
+        else onAuthenticated(result.user)
       }
     } catch (cause) { setError(errorMessage(cause, 'Sign in failed')) }
     finally { setBusy(false) }
+  }
+
+  async function submitMfa(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setBusy(true); setError('')
+    try {
+      const result = await api<{ user: User }>('/api/v1/auth/login/mfa', { method: 'POST', body: JSON.stringify({ mfa_token: mfaToken, code: mfaCode }) })
+      onAuthenticated(result.user)
+    } catch (cause) {
+      setError(errorMessage(cause, 'That code was not accepted'))
+      setMfaCode('')
+    } finally { setBusy(false) }
   }
 
   async function submitPasswordRecovery(event: FormEvent<HTMLFormElement>) {
@@ -56,10 +71,10 @@ export function AuthScreen({ onAuthenticated, initialNotice = '' }: Props) {
     finally { setBusy(false) }
   }
 
-  const heading = recoveryMode === 'reset' ? 'Choose a new password'
+  const heading = mfaToken ? 'Verification code' : recoveryMode === 'reset' ? 'Choose a new password'
     : recoveryMode === 'request' ? 'Reset your password'
       : authMode === 'login' ? 'Welcome back' : 'Create your account'
-  const subheading = recoveryMode ? 'Use the secure link sent to your email address.'
+  const subheading = mfaToken ? 'Enter the code from your authenticator app, or one of your recovery codes.' : recoveryMode ? 'Use the secure link sent to your email address.'
     : authMode === 'login' ? 'Sign in to pick up where you left off.' : 'Choose a username, email address, and a strong password.'
 
   return (
@@ -78,7 +93,13 @@ export function AuthScreen({ onAuthenticated, initialNotice = '' }: Props) {
           <p className="muted">{subheading}</p>
           {error && <div className="notice error" role="alert">{error}</div>}
           {notice && <div className="notice success" role="status">{notice}</div>}
-          {recoveryMode ? (
+          {mfaToken ? (
+            <form className="stack-form" onSubmit={submitMfa}>
+              <label>Code<input autoComplete="one-time-code" inputMode="text" autoFocus required maxLength={32} value={mfaCode} onChange={(event) => setMfaCode(event.target.value)} /></label>
+              <button className="primary-button" disabled={busy}>{busy ? 'Please wait…' : 'Verify and sign in'}</button>
+              <button type="button" className="text-button" onClick={() => { setMfaToken(null); setMfaCode(''); setError('') }}>Back to sign in</button>
+            </form>
+          ) : recoveryMode ? (
             <form className="stack-form" onSubmit={submitPasswordRecovery}>
               {recoveryMode === 'request'
                 ? <label>Email<input autoComplete="email" type="email" required value={email} onChange={(event) => setEmail(event.target.value)} /></label>

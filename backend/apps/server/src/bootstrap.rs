@@ -13,9 +13,10 @@ use rustchat_application::{
 };
 use rustchat_http::{AppEvents, AppState, HttpConfig, router};
 use rustchat_infrastructure::{
+    mfa::AesGcmTotpEngine,
     postgres::{
         self, PgCommunityRepository, PgConversationRepository, PgMessageRepository,
-        PgOutboxRepository, PgSessionRepository, PgUserRepository,
+        PgMfaRepository, PgOutboxRepository, PgSessionRepository, PgUserRepository,
     },
     ratelimit::{InMemoryRateLimiter, PgRateLimiter},
     security::{Argon2Hasher, OsTokenService, SystemClock},
@@ -74,6 +75,14 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         )
     } else {
         auth
+    };
+    // Without an encryption key the server cannot protect TOTP secrets, so MFA stays off.
+    let auth = match config.mfa.as_ref() {
+        Some(mfa) => auth.with_mfa(
+            Arc::new(PgMfaRepository::new(pool.clone())),
+            Arc::new(AesGcmTotpEngine::new(mfa.key.bytes(), mfa.issuer.clone())),
+        ),
+        None => auth,
     };
     let conversations = Arc::new(ConversationService::new(
         users,

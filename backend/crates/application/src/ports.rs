@@ -59,6 +59,98 @@ pub struct ActiveSession {
     pub via_previous_token: bool,
 }
 
+/// A TOTP secret sealed with the server key. Only the ciphertext and nonce are stored.
+#[derive(Clone, PartialEq, Eq)]
+pub struct EncryptedSecret {
+    pub ciphertext: Vec<u8>,
+    pub nonce: [u8; 12],
+}
+
+impl std::fmt::Debug for EncryptedSecret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("EncryptedSecret(<redacted>)")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TotpRecord {
+    pub secret: EncryptedSecret,
+    /// False while enrolment is pending a first valid code.
+    pub confirmed: bool,
+    pub last_used_step: Option<i64>,
+}
+
+/// TOTP (RFC 6238) and the sealing of its secrets. Implemented with
+/// maintained, reviewed libraries; no cryptography lives in this crate.
+pub trait TotpEngine: Send + Sync {
+    /// A new random secret of at least 160 bits.
+    fn generate_secret(&self) -> Result<Vec<u8>, AppError>;
+    /// Encrypt a secret so that it can only be opened for `user_id`.
+    fn seal(&self, user_id: UserId, secret: &[u8]) -> Result<EncryptedSecret, AppError>;
+    fn open(&self, user_id: UserId, sealed: &EncryptedSecret) -> Result<Vec<u8>, AppError>;
+    fn base32(&self, secret: &[u8]) -> String;
+    /// An `otpauth://` URI for authenticator apps.
+    fn provisioning_uri(&self, secret: &[u8], account: &str) -> Result<String, AppError>;
+    /// The time step a six-digit `code` matches at `now` (allowing one step of
+    /// clock skew either way), in constant time with respect to the code.
+    fn matching_step(&self, secret: &[u8], code: &str, now: OffsetDateTime) -> Option<i64>;
+}
+
+#[async_trait]
+pub trait MfaRepository: Send + Sync {
+    async fn totp(&self, user_id: UserId) -> Result<Option<TotpRecord>, AppError>;
+    /// Store a new pending secret, replacing an earlier pending one. Returns
+    /// false when the user already has a confirmed secret.
+    async fn begin_totp(
+        &self,
+        user_id: UserId,
+        secret: &EncryptedSecret,
+        now: OffsetDateTime,
+    ) -> Result<bool, AppError>;
+    /// Confirm a pending secret, recording the accepted step and replacing the
+    /// recovery codes, atomically. Returns false when nothing was pending.
+    async fn confirm_totp(
+        &self,
+        user_id: UserId,
+        step: i64,
+        recovery_digests: &[TokenDigest],
+        now: OffsetDateTime,
+    ) -> Result<bool, AppError>;
+    /// Accept `step` only if it is newer than every step accepted before.
+    async fn use_totp_step(&self, user_id: UserId, step: i64) -> Result<bool, AppError>;
+    async fn use_recovery_code(
+        &self,
+        user_id: UserId,
+        digest: &TokenDigest,
+        now: OffsetDateTime,
+    ) -> Result<bool, AppError>;
+    async fn recovery_codes_remaining(&self, user_id: UserId) -> Result<u32, AppError>;
+    async fn replace_recovery_codes(
+        &self,
+        user_id: UserId,
+        digests: &[TokenDigest],
+        now: OffsetDateTime,
+    ) -> Result<(), AppError>;
+    /// Remove the secret, recovery codes and pending challenges.
+    async fn disable_totp(&self, user_id: UserId) -> Result<(), AppError>;
+    async fn create_challenge(
+        &self,
+        user_id: UserId,
+        digest: TokenDigest,
+        now: OffsetDateTime,
+        expires_at: OffsetDateTime,
+    ) -> Result<(), AppError>;
+    /// Spend one attempt on a live challenge and return its (still active) user.
+    /// None when unknown, expired, out of attempts or the user is not active.
+    async fn attempt_challenge(
+        &self,
+        digest: &TokenDigest,
+        now: OffsetDateTime,
+        max_attempts: i32,
+    ) -> Result<Option<User>, AppError>;
+    async fn delete_challenge(&self, digest: &TokenDigest) -> Result<(), AppError>;
+}
+
 /// A user as named in an audit entry. The username is as currently stored, so a
 /// deleted account appears under its tombstone name.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -579,6 +671,9 @@ pub trait PasswordHasher: Send + Sync {
 
 pub trait TokenService: Send + Sync {
     fn generate(&self) -> NewToken;
+    /// A human-typable single-use recovery code (about 80 bits), for example
+    /// `k3m9-x2pq-7vhd-4tnw`.
+    fn recovery_code(&self) -> String;
     fn digest(&self, raw: &str) -> TokenDigest;
 }
 

@@ -21,9 +21,10 @@ use rustchat_application::{
 };
 use rustchat_http::{AppEvents, AppState, ClientIpSource, HttpConfig, router};
 use rustchat_infrastructure::{
+    mfa::AesGcmTotpEngine,
     postgres::{
-        PgCommunityRepository, PgConversationRepository, PgMessageRepository, PgSessionRepository,
-        PgUserRepository,
+        PgCommunityRepository, PgConversationRepository, PgMessageRepository, PgMfaRepository,
+        PgSessionRepository, PgUserRepository,
     },
     ratelimit::InMemoryRateLimiter,
     security::{Argon2Hasher, OsTokenService, SystemClock},
@@ -76,6 +77,8 @@ impl CapturedEmail {
 }
 
 pub struct Options {
+    /// Offer TOTP enrolment (real engine and repository, fixed test key).
+    pub mfa: bool,
     /// Accounts treated as instance administrators.
     pub admin_user_ids: std::collections::HashSet<rustchat_domain::identity::UserId>,
     pub email: Option<CapturedEmail>,
@@ -93,6 +96,7 @@ impl Default for Options {
             window: time::Duration::hours(1),
         };
         Self {
+            mfa: false,
             admin_user_ids: Default::default(),
             email: None,
             api_limits: None,
@@ -125,6 +129,14 @@ pub fn app(pool: PgPool, options: Options) -> Router {
     )
     .with_session_lifecycle(options.lifecycle)
     .with_instance_admins(options.admin_user_ids);
+    let auth = if options.mfa {
+        auth.with_mfa(
+            Arc::new(PgMfaRepository::new(pool.clone())),
+            Arc::new(AesGcmTotpEngine::new([9u8; 32], "RustChat")),
+        )
+    } else {
+        auth
+    };
     let auth = match options.email {
         Some(email) => auth.with_email_delivery(Arc::new(email), ORIGIN.to_owned()),
         None => auth,

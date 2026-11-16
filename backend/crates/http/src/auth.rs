@@ -7,7 +7,7 @@ use axum::{
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use rustchat_application::{
-    auth::{AuthContext, LoginResult},
+    auth::{AuthContext, LoginOutcome, LoginResult},
     error::AppError,
     ratelimit::ApiOperation,
 };
@@ -584,16 +584,154 @@ pub async fn login(
     ClientIp(ip): ClientIp,
     jar: CookieJar,
     ApiJson(body): ApiJson<Credentials>,
+) -> Result<(StatusCode, CookieJar, Json<serde_json::Value>), ApiError> {
+    match state
+        .auth
+        .login_step(ip, &body.username, body.password)
+        .await?
+    {
+        LoginOutcome::Session(LoginResult { user, token, .. }) => Ok((
+            StatusCode::OK,
+            jar.add(session_cookie(&state, token)),
+            Json(serde_json::json!({ "user": UserDto::from(&user) })),
+        )),
+        // No session yet: the client finishes with the code from the second factor.
+        LoginOutcome::MfaRequired { challenge } => Ok((
+            StatusCode::ACCEPTED,
+            jar,
+            Json(serde_json::json!({ "mfa_required": true, "mfa_token": challenge })),
+        )),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MfaLogin {
+    mfa_token: String,
+    code: String,
+}
+
+pub async fn login_mfa(
+    State(state): State<AppState>,
+    ClientIp(ip): ClientIp,
+    jar: CookieJar,
+    ApiJson(body): ApiJson<MfaLogin>,
 ) -> Result<(CookieJar, Json<UserEnvelope>), ApiError> {
-    let LoginResult { user, token, .. } =
-        state.auth.login(ip, &body.username, body.password).await?;
-    let jar = jar.add(session_cookie(&state, token));
+    let LoginResult { user, token, .. } = state
+        .auth
+        .complete_mfa_login(ip, &body.mfa_token, &body.code)
+        .await?;
     Ok((
-        jar,
+        jar.add(session_cookie(&state, token)),
         Json(UserEnvelope {
             user: UserDto::from(&user),
         }),
     ))
+}
+
+#[derive(Serialize)]
+pub struct MfaStatusDto {
+    /// The server can enrol authenticators (an encryption key is configured).
+    available: bool,
+    enabled: bool,
+    recovery_codes_remaining: u32,
+}
+
+#[derive(Serialize)]
+pub struct MfaStatusEnvelope {
+    mfa: MfaStatusDto,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BeginTotp {
+    current_password: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfirmTotp {
+    code: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MfaReauth {
+    current_password: String,
+    code: String,
+}
+
+#[derive(Serialize)]
+pub struct RecoveryCodesEnvelope {
+    recovery_codes: Vec<String>,
+}
+
+pub async fn mfa_status(
+    State(state): State<AppState>,
+    AuthUser(auth): AuthUser,
+) -> Result<Json<MfaStatusEnvelope>, ApiError> {
+    let status = state.auth.mfa_status(auth.user.id).await?;
+    Ok(Json(MfaStatusEnvelope {
+        mfa: MfaStatusDto {
+            available: status.available,
+            enabled: status.enabled,
+            recovery_codes_remaining: status.recovery_codes_remaining,
+        },
+    }))
+}
+
+pub async fn begin_totp(
+    State(state): State<AppState>,
+    AuthUser(auth): AuthUser,
+    ClientIp(ip): ClientIp,
+    ApiJson(body): ApiJson<BeginTotp>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let enrollment = state
+        .auth
+        .begin_totp_enrollment(&auth, ip, body.current_password)
+        .await?;
+    Ok(Json(serde_json::json!({
+        "secret": enrollment.secret_base32,
+        "otpauth_uri": enrollment.provisioning_uri,
+    })))
+}
+
+pub async fn confirm_totp(
+    State(state): State<AppState>,
+    AuthUser(auth): AuthUser,
+    ApiJson(body): ApiJson<ConfirmTotp>,
+) -> Result<Json<RecoveryCodesEnvelope>, ApiError> {
+    let recovery_codes = state
+        .auth
+        .confirm_totp_enrollment(&auth, &body.code)
+        .await?;
+    Ok(Json(RecoveryCodesEnvelope { recovery_codes }))
+}
+
+pub async fn disable_mfa(
+    State(state): State<AppState>,
+    AuthUser(auth): AuthUser,
+    ClientIp(ip): ClientIp,
+    ApiJson(body): ApiJson<MfaReauth>,
+) -> Result<StatusCode, ApiError> {
+    state
+        .auth
+        .disable_mfa(&auth, ip, body.current_password, &body.code)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn regenerate_recovery_codes(
+    State(state): State<AppState>,
+    AuthUser(auth): AuthUser,
+    ClientIp(ip): ClientIp,
+    ApiJson(body): ApiJson<MfaReauth>,
+) -> Result<Json<RecoveryCodesEnvelope>, ApiError> {
+    let recovery_codes = state
+        .auth
+        .regenerate_recovery_codes(&auth, ip, body.current_password, &body.code)
+        .await?;
+    Ok(Json(RecoveryCodesEnvelope { recovery_codes }))
 }
 
 pub async fn logout(

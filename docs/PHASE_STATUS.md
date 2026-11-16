@@ -24,6 +24,8 @@ Phase 0's exit criterion is met: a contributor can follow the documented local s
 - Editable usernames and basic profiles with display name and bio.
 - User configured profile discoverability and visibility, with an exact username profile preview and matching server side restrictions on new conversation creation.
 - User-configurable presence visibility, process-local online/offline transitions counted across multiple tabs, conversation-scoped status snapshots, and client status indicators on direct conversations.
+- Session idle timeout and 24-hour token rotation with a 60-second grace period, authenticated password-change and recovery flows, verified recovery email addresses (single-use links; recovery is sent only to a verified address), and optional TOTP two-step verification with recovery codes (enabled by a server encryption key; see ADR 0013).
+- Per-user rate limits on all authenticated API routes (reads, writes, message sends, creations) and a per-network limit on failed-authentication requests, plus audit history browsing for instance administrators and community managers.
 - Direct and group conversations, membership checks, and group-size limits.
 - Durable, ordered, cursor-paginated messages with idempotent sends, same-conversation replies, member-scoped mentions, edits, soft deletes, emoji reactions, a transactional outbox, and durable read and delivery cursors.
 - Per-conversation local unsent drafts stored in the browser and restored when returning to a conversation.

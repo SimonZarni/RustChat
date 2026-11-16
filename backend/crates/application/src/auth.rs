@@ -8,6 +8,9 @@ use rustchat_domain::identity::{
 };
 use time::{Duration, OffsetDateTime};
 
+mod mfa;
+pub use mfa::{LoginOutcome, MfaStatus, TotpEnrollment};
+
 use crate::{
     error::AppError,
     ports::{
@@ -121,6 +124,10 @@ pub struct AuthService {
     email_delivery: Option<Arc<dyn EmailDelivery>>,
     public_url: Option<String>,
     lifecycle: SessionLifecycle,
+    mfa: Option<(
+        Arc<dyn crate::ports::MfaRepository>,
+        Arc<dyn crate::ports::TotpEngine>,
+    )>,
     config: AuthConfig,
 }
 
@@ -145,6 +152,7 @@ impl AuthService {
             email_delivery: None,
             public_url: None,
             lifecycle: SessionLifecycle::default(),
+            mfa: None,
             config,
         }
     }
@@ -543,6 +551,20 @@ impl AuthService {
         username: &str,
         password: String,
     ) -> Result<LoginResult, AppError> {
+        match self.login_step(client_ip, username, password).await? {
+            LoginOutcome::Session(result) => Ok(result),
+            LoginOutcome::MfaRequired { .. } => Err(AppError::MfaRequired),
+        }
+    }
+
+    /// The password step of a login: a session, or a challenge when the account
+    /// has a second factor. The limits and error behaviour are those of `login`.
+    pub async fn login_step(
+        &self,
+        client_ip: IpAddr,
+        username: &str,
+        password: String,
+    ) -> Result<LoginOutcome, AppError> {
         let now = self.clock.now();
         let limits = self.config.rate_limits;
         let ip_key = login_ip_key(client_ip);
@@ -571,7 +593,7 @@ impl AuthService {
         &self,
         username: &str,
         password: String,
-    ) -> Result<LoginResult, AppError> {
+    ) -> Result<LoginOutcome, AppError> {
         let Some(password) = PlainPassword::from_login_input(password) else {
             return Err(AppError::InvalidCredentials);
         };
@@ -591,13 +613,24 @@ impl AuthService {
             return Err(AppError::InvalidCredentials);
         }
 
+        if self.requires_second_factor(credentials.user.id).await? {
+            let challenge = self.start_mfa_challenge(credentials.user.id).await?;
+            return Ok(LoginOutcome::MfaRequired { challenge });
+        }
+        Ok(LoginOutcome::Session(
+            self.start_session(credentials.user).await?,
+        ))
+    }
+
+    /// Issue a session for a fully authenticated user.
+    async fn start_session(&self, user: User) -> Result<LoginResult, AppError> {
         // A new random token is issued on every login; a client-supplied
         // session identifier is never accepted, preventing fixation.
         let now = self.clock.now();
         let token = self.tokens.generate();
         let session = Session {
             id: SessionId::new(),
-            user_id: credentials.user.id,
+            user_id: user.id,
             created_at: now,
             expires_at: now + self.config.session_ttl,
         };
@@ -608,7 +641,7 @@ impl AuthService {
             })
             .await?;
         Ok(LoginResult {
-            user: credentials.user,
+            user,
             token: token.raw,
             session,
         })
@@ -884,7 +917,7 @@ mod tests {
     use super::*;
     use crate::{
         ports::RateLimitRule,
-        testing::{Harness, generous_limits},
+        testing::{FakeTotp, Harness, generous_limits},
     };
     use std::net::Ipv4Addr;
 
@@ -1096,6 +1129,279 @@ mod tests {
         let before = h.emails.sent().len();
         h.auth.resend_email_verification(&auth).await.unwrap();
         assert_eq!(h.emails.sent().len(), before);
+    }
+
+    /// Register, sign in and enable TOTP; returns the principal and the recovery codes.
+    async fn with_totp(h: &Harness) -> (AuthContext, Vec<String>) {
+        h.auth.register(IP, "alice", PASSWORD.into()).await.unwrap();
+        let login = h.auth.login(IP, "alice", PASSWORD.into()).await.unwrap();
+        let auth = h.auth.authenticate(&login.token).await.unwrap();
+        h.auth
+            .begin_totp_enrollment(&auth, IP, PASSWORD.into())
+            .await
+            .unwrap();
+        let code = FakeTotp::code_at(h.clock.now());
+        let codes = h.auth.confirm_totp_enrollment(&auth, &code).await.unwrap();
+        // Enrolment used this time step; later codes must come from a newer one.
+        h.clock.advance(Duration::seconds(30));
+        (auth, codes)
+    }
+
+    async fn challenge_for(h: &Harness) -> String {
+        match h
+            .auth
+            .login_step(IP, "alice", PASSWORD.into())
+            .await
+            .unwrap()
+        {
+            LoginOutcome::MfaRequired { challenge } => challenge,
+            LoginOutcome::Session(_) => panic!("a second factor should be required"),
+        }
+    }
+
+    #[tokio::test]
+    async fn enrolment_needs_the_password_and_a_valid_code_and_issues_recovery_codes() {
+        let h = Harness::new(RegistrationPolicy::Open);
+        h.auth.register(IP, "alice", PASSWORD.into()).await.unwrap();
+        let login = h.auth.login(IP, "alice", PASSWORD.into()).await.unwrap();
+        let auth = h.auth.authenticate(&login.token).await.unwrap();
+        assert!(h.auth.mfa_status(auth.user.id).await.unwrap().available);
+
+        assert!(matches!(
+            h.auth
+                .begin_totp_enrollment(&auth, IP, "wrong password!!".into())
+                .await,
+            Err(AppError::InvalidCredentials)
+        ));
+        let enrollment = h
+            .auth
+            .begin_totp_enrollment(&auth, IP, PASSWORD.into())
+            .await
+            .unwrap();
+        assert!(enrollment.provisioning_uri.starts_with("otpauth://totp/"));
+        // Pending enrolment does not change login or status.
+        assert!(!h.auth.mfa_status(auth.user.id).await.unwrap().enabled);
+        assert!(h.auth.login(IP, "alice", PASSWORD.into()).await.is_ok());
+
+        assert!(matches!(
+            h.auth.confirm_totp_enrollment(&auth, "000000").await,
+            Err(AppError::InvalidMfaCode)
+        ));
+        let codes = h
+            .auth
+            .confirm_totp_enrollment(&auth, &FakeTotp::code_at(h.clock.now()))
+            .await
+            .unwrap();
+        assert_eq!(codes.len(), 10);
+        let status = h.auth.mfa_status(auth.user.id).await.unwrap();
+        assert!(status.enabled);
+        assert_eq!(status.recovery_codes_remaining, 10);
+        assert!(matches!(
+            h.auth
+                .begin_totp_enrollment(&auth, IP, PASSWORD.into())
+                .await,
+            Err(AppError::MfaAlreadyEnabled)
+        ));
+    }
+
+    #[tokio::test]
+    async fn login_with_a_second_factor_needs_a_fresh_valid_code() {
+        let h = Harness::new(RegistrationPolicy::Open);
+        with_totp(&h).await;
+
+        // The password alone no longer gives a session.
+        assert!(matches!(
+            h.auth.login(IP, "alice", PASSWORD.into()).await,
+            Err(AppError::MfaRequired)
+        ));
+        let challenge = challenge_for(&h).await;
+        assert!(matches!(
+            h.auth.complete_mfa_login(IP, &challenge, "000000").await,
+            Err(AppError::InvalidMfaCode)
+        ));
+        let code = FakeTotp::code_at(h.clock.now());
+        let login = h
+            .auth
+            .complete_mfa_login(IP, &challenge, &code)
+            .await
+            .unwrap();
+        assert_eq!(login.user.username.as_str(), "alice");
+        assert!(h.auth.authenticate(&login.token).await.is_ok());
+
+        // The same code cannot be used twice, even on a new challenge.
+        let again = challenge_for(&h).await;
+        assert!(matches!(
+            h.auth.complete_mfa_login(IP, &again, &code).await,
+            Err(AppError::InvalidMfaCode)
+        ));
+        // The challenge itself is single-use.
+        assert!(matches!(
+            h.auth.complete_mfa_login(IP, &challenge, &code).await,
+            Err(AppError::InvalidMfaCode)
+        ));
+        h.clock.advance(Duration::seconds(30));
+        let next = FakeTotp::code_at(h.clock.now());
+        assert!(h.auth.complete_mfa_login(IP, &again, &next).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn challenges_expire_and_run_out_of_attempts() {
+        let h = Harness::new(RegistrationPolicy::Open);
+        with_totp(&h).await;
+
+        let expiring = challenge_for(&h).await;
+        h.clock.advance(Duration::minutes(5));
+        let code = FakeTotp::code_at(h.clock.now());
+        assert!(matches!(
+            h.auth.complete_mfa_login(IP, &expiring, &code).await,
+            Err(AppError::InvalidMfaCode)
+        ));
+
+        let guessed = challenge_for(&h).await;
+        for _ in 0..5 {
+            let _ = h.auth.complete_mfa_login(IP, &guessed, "111111").await;
+        }
+        // Even the right code is refused once the attempts are spent.
+        let code = FakeTotp::code_at(h.clock.now());
+        assert!(matches!(
+            h.auth.complete_mfa_login(IP, &guessed, &code).await,
+            Err(AppError::InvalidMfaCode)
+        ));
+        // A garbage challenge fails the same way.
+        assert!(matches!(
+            h.auth.complete_mfa_login(IP, "nope", &code).await,
+            Err(AppError::InvalidMfaCode)
+        ));
+    }
+
+    #[tokio::test]
+    async fn recovery_codes_work_once_in_any_format() {
+        let h = Harness::new(RegistrationPolicy::Open);
+        let (auth, codes) = with_totp(&h).await;
+
+        let challenge = challenge_for(&h).await;
+        let spaced = codes[0].to_uppercase().replace('-', " ");
+        assert!(
+            h.auth
+                .complete_mfa_login(IP, &challenge, &spaced)
+                .await
+                .is_ok()
+        );
+        assert_eq!(
+            h.auth
+                .mfa_status(auth.user.id)
+                .await
+                .unwrap()
+                .recovery_codes_remaining,
+            9
+        );
+        let again = challenge_for(&h).await;
+        assert!(matches!(
+            h.auth.complete_mfa_login(IP, &again, &codes[0]).await,
+            Err(AppError::InvalidMfaCode)
+        ));
+        assert!(
+            h.auth
+                .complete_mfa_login(IP, &again, &codes[1])
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn repeated_wrong_codes_lock_the_account_out_for_the_window() {
+        let h = Harness::with_limits(RegistrationPolicy::Open, limits(1000, 3, 1000));
+        with_totp(&h).await;
+
+        for _ in 0..3 {
+            let challenge = challenge_for(&h).await;
+            assert!(matches!(
+                h.auth.complete_mfa_login(IP, &challenge, "111111").await,
+                Err(AppError::InvalidMfaCode)
+            ));
+        }
+        let challenge = challenge_for(&h).await;
+        let code = FakeTotp::code_at(h.clock.now());
+        assert!(matches!(
+            h.auth.complete_mfa_login(IP, &challenge, &code).await,
+            Err(AppError::RateLimited { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn disabling_needs_the_password_and_a_code_and_restores_plain_login() {
+        let h = Harness::new(RegistrationPolicy::Open);
+        let (auth, _) = with_totp(&h).await;
+        let code = FakeTotp::code_at(h.clock.now());
+
+        assert!(matches!(
+            h.auth
+                .disable_mfa(&auth, IP, "wrong password!!".into(), &code)
+                .await,
+            Err(AppError::InvalidCredentials)
+        ));
+        assert!(matches!(
+            h.auth
+                .disable_mfa(&auth, IP, PASSWORD.into(), "000000")
+                .await,
+            Err(AppError::InvalidMfaCode)
+        ));
+        h.auth
+            .disable_mfa(&auth, IP, PASSWORD.into(), &code)
+            .await
+            .unwrap();
+        let status = h.auth.mfa_status(auth.user.id).await.unwrap();
+        assert!(!status.enabled);
+        assert_eq!(status.recovery_codes_remaining, 0);
+        assert!(h.auth.login(IP, "alice", PASSWORD.into()).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn regenerating_recovery_codes_invalidates_the_old_ones() {
+        let h = Harness::new(RegistrationPolicy::Open);
+        let (auth, old) = with_totp(&h).await;
+        let code = FakeTotp::code_at(h.clock.now());
+
+        let fresh = h
+            .auth
+            .regenerate_recovery_codes(&auth, IP, PASSWORD.into(), &code)
+            .await
+            .unwrap();
+        assert_eq!(fresh.len(), 10);
+        assert!(fresh.iter().all(|code| !old.contains(code)));
+
+        let challenge = challenge_for(&h).await;
+        assert!(matches!(
+            h.auth.complete_mfa_login(IP, &challenge, &old[0]).await,
+            Err(AppError::InvalidMfaCode)
+        ));
+        assert!(
+            h.auth
+                .complete_mfa_login(IP, &challenge, &fresh[0])
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pending_enrolment_can_be_restarted_but_a_confirmed_one_cannot_be_replaced() {
+        let h = Harness::new(RegistrationPolicy::Open);
+        h.auth.register(IP, "alice", PASSWORD.into()).await.unwrap();
+        let login = h.auth.login(IP, "alice", PASSWORD.into()).await.unwrap();
+        let auth = h.auth.authenticate(&login.token).await.unwrap();
+        for _ in 0..2 {
+            h.auth
+                .begin_totp_enrollment(&auth, IP, PASSWORD.into())
+                .await
+                .unwrap();
+        }
+        // Confirming without a pending enrolment (or a second time) fails.
+        let code = FakeTotp::code_at(h.clock.now());
+        h.auth.confirm_totp_enrollment(&auth, &code).await.unwrap();
+        assert!(matches!(
+            h.auth.confirm_totp_enrollment(&auth, &code).await,
+            Err(AppError::InvalidMfaCode)
+        ));
     }
 
     #[tokio::test]

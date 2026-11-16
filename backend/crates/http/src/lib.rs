@@ -320,6 +320,15 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/auth/register", post(auth::register))
         .route("/auth/login", post(auth::login))
+        .route("/auth/login/mfa", post(auth::login_mfa))
+        .route("/auth/mfa", get(auth::mfa_status))
+        .route("/auth/mfa/totp", post(auth::begin_totp))
+        .route("/auth/mfa/totp/confirm", post(auth::confirm_totp))
+        .route("/auth/mfa/disable", post(auth::disable_mfa))
+        .route(
+            "/auth/mfa/recovery-codes",
+            post(auth::regenerate_recovery_codes),
+        )
         .route("/auth/logout", post(auth::logout))
         .route("/auth/me", get(auth::me))
         .route("/auth/password", post(auth::change_password))

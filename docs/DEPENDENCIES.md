@@ -30,6 +30,8 @@ Selected direct dependencies:
 | `async-trait` | MIT OR Apache-2.0 | Async methods on port traits used as trait objects |
 | `tracing`, `tracing-subscriber` | MIT | Structured logging |
 | `lettre` | MIT OR Apache-2.0 | Optional SMTP password-reset delivery using Rustls |
+| `totp-rs` | MIT | RFC 6238 time-based one-time passwords for two-step verification (default features off; `otpauth` for provisioning URIs) |
+| `aes-gcm` | Apache-2.0 OR MIT | AES-256-GCM sealing of stored authenticator secrets (RustCrypto) |
 | `tokio-tungstenite` (HTTP dev dependency) | MIT | Real WebSocket API integration tests |
 
 No custom cryptography is implemented; hashing and randomness come from maintained RustCrypto and OS facilities.

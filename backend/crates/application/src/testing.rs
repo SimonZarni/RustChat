@@ -33,8 +33,18 @@ struct VerificationToken {
     used: bool,
 }
 
+struct Challenge {
+    digest: TokenDigest,
+    user_id: UserId,
+    expires_at: OffsetDateTime,
+    attempts: i32,
+}
+
 #[derive(Default)]
 struct Store {
+    totp: HashMap<UserId, TotpRecord>,
+    recovery_codes: Vec<(UserId, TokenDigest, bool)>,
+    challenges: Vec<Challenge>,
     emails: HashMap<
         UserId,
         (
@@ -455,6 +465,214 @@ impl UserRepository for FakeStore {
 }
 
 #[async_trait]
+impl MfaRepository for FakeStore {
+    async fn totp(&self, user_id: UserId) -> Result<Option<TotpRecord>, AppError> {
+        Ok(self.0.lock().unwrap().totp.get(&user_id).cloned())
+    }
+
+    async fn begin_totp(
+        &self,
+        user_id: UserId,
+        secret: &EncryptedSecret,
+        _now: OffsetDateTime,
+    ) -> Result<bool, AppError> {
+        let mut store = self.0.lock().unwrap();
+        if store.totp.get(&user_id).is_some_and(|row| row.confirmed) {
+            return Ok(false);
+        }
+        store.totp.insert(
+            user_id,
+            TotpRecord {
+                secret: secret.clone(),
+                confirmed: false,
+                last_used_step: None,
+            },
+        );
+        Ok(true)
+    }
+
+    async fn confirm_totp(
+        &self,
+        user_id: UserId,
+        step: i64,
+        recovery_digests: &[TokenDigest],
+        _now: OffsetDateTime,
+    ) -> Result<bool, AppError> {
+        let mut store = self.0.lock().unwrap();
+        match store.totp.get_mut(&user_id) {
+            Some(row) if !row.confirmed => {
+                row.confirmed = true;
+                row.last_used_step = Some(step);
+            }
+            _ => return Ok(false),
+        }
+        store.recovery_codes.retain(|(id, _, _)| *id != user_id);
+        store.recovery_codes.extend(
+            recovery_digests
+                .iter()
+                .map(|digest| (user_id, *digest, false)),
+        );
+        Ok(true)
+    }
+
+    async fn use_totp_step(&self, user_id: UserId, step: i64) -> Result<bool, AppError> {
+        let mut store = self.0.lock().unwrap();
+        match store.totp.get_mut(&user_id) {
+            Some(row) if row.confirmed && row.last_used_step.is_none_or(|last| last < step) => {
+                row.last_used_step = Some(step);
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    async fn use_recovery_code(
+        &self,
+        user_id: UserId,
+        digest: &TokenDigest,
+        _now: OffsetDateTime,
+    ) -> Result<bool, AppError> {
+        let mut store = self.0.lock().unwrap();
+        match store
+            .recovery_codes
+            .iter_mut()
+            .find(|(id, d, used)| *id == user_id && d == digest && !*used)
+        {
+            Some(entry) => {
+                entry.2 = true;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    async fn recovery_codes_remaining(&self, user_id: UserId) -> Result<u32, AppError> {
+        let store = self.0.lock().unwrap();
+        Ok(store
+            .recovery_codes
+            .iter()
+            .filter(|(id, _, used)| *id == user_id && !*used)
+            .count() as u32)
+    }
+
+    async fn replace_recovery_codes(
+        &self,
+        user_id: UserId,
+        digests: &[TokenDigest],
+        _now: OffsetDateTime,
+    ) -> Result<(), AppError> {
+        let mut store = self.0.lock().unwrap();
+        store.recovery_codes.retain(|(id, _, _)| *id != user_id);
+        store
+            .recovery_codes
+            .extend(digests.iter().map(|digest| (user_id, *digest, false)));
+        Ok(())
+    }
+
+    async fn disable_totp(&self, user_id: UserId) -> Result<(), AppError> {
+        let mut store = self.0.lock().unwrap();
+        store.totp.remove(&user_id);
+        store.recovery_codes.retain(|(id, _, _)| *id != user_id);
+        store.challenges.retain(|c| c.user_id != user_id);
+        Ok(())
+    }
+
+    async fn create_challenge(
+        &self,
+        user_id: UserId,
+        digest: TokenDigest,
+        _now: OffsetDateTime,
+        expires_at: OffsetDateTime,
+    ) -> Result<(), AppError> {
+        self.0.lock().unwrap().challenges.push(Challenge {
+            digest,
+            user_id,
+            expires_at,
+            attempts: 0,
+        });
+        Ok(())
+    }
+
+    async fn attempt_challenge(
+        &self,
+        digest: &TokenDigest,
+        now: OffsetDateTime,
+        max_attempts: i32,
+    ) -> Result<Option<User>, AppError> {
+        let mut store = self.0.lock().unwrap();
+        let Some(challenge) = store
+            .challenges
+            .iter_mut()
+            .find(|c| &c.digest == digest && c.expires_at > now && c.attempts < max_attempts)
+        else {
+            return Ok(None);
+        };
+        challenge.attempts += 1;
+        let user_id = challenge.user_id;
+        Ok(store
+            .users
+            .iter()
+            .find(|(user, _)| user.id == user_id)
+            .map(|(user, _)| user.clone()))
+    }
+
+    async fn delete_challenge(&self, digest: &TokenDigest) -> Result<(), AppError> {
+        self.0
+            .lock()
+            .unwrap()
+            .challenges
+            .retain(|c| &c.digest != digest);
+        Ok(())
+    }
+}
+
+/// A TOTP engine with predictable codes: the code for a 30-second step is
+/// `FakeTotp::code_at(time)`. It does no cryptography.
+pub struct FakeTotp;
+
+impl FakeTotp {
+    fn code_for_step(step: i64) -> String {
+        format!("{:06}", (step * 7919 + 12_345).rem_euclid(1_000_000))
+    }
+
+    pub fn code_at(time: OffsetDateTime) -> String {
+        Self::code_for_step(time.unix_timestamp() / 30)
+    }
+}
+
+impl TotpEngine for FakeTotp {
+    fn generate_secret(&self) -> Result<Vec<u8>, AppError> {
+        Ok(vec![7; 20])
+    }
+
+    fn seal(&self, _user_id: UserId, secret: &[u8]) -> Result<EncryptedSecret, AppError> {
+        Ok(EncryptedSecret {
+            ciphertext: secret.to_vec(),
+            nonce: [0; 12],
+        })
+    }
+
+    fn open(&self, _user_id: UserId, sealed: &EncryptedSecret) -> Result<Vec<u8>, AppError> {
+        Ok(sealed.ciphertext.clone())
+    }
+
+    fn base32(&self, _secret: &[u8]) -> String {
+        "FAKESECRET".to_owned()
+    }
+
+    fn provisioning_uri(&self, _secret: &[u8], account: &str) -> Result<String, AppError> {
+        Ok(format!(
+            "otpauth://totp/RustChat:{account}?secret=FAKESECRET"
+        ))
+    }
+
+    fn matching_step(&self, _secret: &[u8], code: &str, now: OffsetDateTime) -> Option<i64> {
+        let current = now.unix_timestamp() / 30;
+        (current - 1..=current + 1).find(|step| Self::code_for_step(*step) == code)
+    }
+}
+
+#[async_trait]
 impl SessionRepository for FakeStore {
     async fn insert(&self, new: NewSession) -> Result<(), AppError> {
         let mut store = self.0.lock().unwrap();
@@ -641,6 +859,12 @@ impl TokenService for FakeTokens {
         NewToken { raw, digest }
     }
 
+    fn recovery_code(&self) -> String {
+        let mut counter = self.0.lock().unwrap();
+        *counter += 1;
+        format!("rc{:02}-aaaa-bbbb-cccc", *counter)
+    }
+
     fn digest(&self, raw: &str) -> TokenDigest {
         let mut bytes = [0u8; 32];
         for (slot, byte) in bytes.iter_mut().zip(raw.bytes()) {
@@ -782,7 +1006,7 @@ impl Harness {
         let emails = Arc::new(FakeEmail::default());
         let auth = AuthService::new(
             Arc::new(store.clone()),
-            Arc::new(store),
+            Arc::new(store.clone()),
             hasher.clone(),
             Arc::new(FakeTokens::default()),
             clock.clone(),
@@ -793,7 +1017,8 @@ impl Harness {
                 rate_limits,
             },
         )
-        .with_email_delivery(emails.clone(), "https://chat.example.test".to_owned());
+        .with_email_delivery(emails.clone(), "https://chat.example.test".to_owned())
+        .with_mfa(Arc::new(store), Arc::new(FakeTotp));
         Self {
             emails,
             auth,

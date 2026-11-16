@@ -48,6 +48,12 @@ pub enum ConfigError {
     #[error("authentication rate limits must be between 1 and 100000")]
     InvalidRateLimit,
     #[error(
+        "RUSTCHAT_MFA_ENCRYPTION_KEY must be 64 hexadecimal characters (32 random bytes, for example from `openssl rand -hex 32`)"
+    )]
+    InvalidMfaKey,
+    #[error("RUSTCHAT_MFA_ISSUER must be 1 to 64 characters and must not contain a colon")]
+    InvalidMfaIssuer,
+    #[error(
         "SMTP configuration requires RUSTCHAT_SMTP_HOST, RUSTCHAT_EMAIL_FROM, and RUSTCHAT_PUBLIC_URL"
     )]
     IncompleteEmailConfig,
@@ -101,6 +107,44 @@ pub struct Config {
     /// Per-user budgets for general API traffic (per server process).
     pub api_rate_limits: ApiRateLimitConfig,
     pub email: Option<EmailConfig>,
+    /// Present when an encryption key is configured, which enables TOTP enrolment.
+    pub mfa: Option<MfaConfig>,
+}
+
+/// The 256-bit key that protects stored TOTP secrets. `Debug` is redacted.
+#[derive(Clone, PartialEq, Eq)]
+pub struct MfaKey([u8; 32]);
+
+impl MfaKey {
+    pub fn parse_hex(raw: &str) -> Result<Self, ConfigError> {
+        let raw = raw.trim();
+        if raw.len() != 64 || !raw.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(ConfigError::InvalidMfaKey);
+        }
+        let mut key = [0u8; 32];
+        for (slot, pair) in key.iter_mut().zip(raw.as_bytes().chunks(2)) {
+            let pair = std::str::from_utf8(pair).map_err(|_| ConfigError::InvalidMfaKey)?;
+            *slot = u8::from_str_radix(pair, 16).map_err(|_| ConfigError::InvalidMfaKey)?;
+        }
+        Ok(Self(key))
+    }
+
+    pub fn bytes(&self) -> [u8; 32] {
+        self.0
+    }
+}
+
+impl fmt::Debug for MfaKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("MfaKey(<redacted>)")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MfaConfig {
+    pub key: MfaKey,
+    /// Shown in authenticator apps next to the account name.
+    pub issuer: String,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -227,6 +271,23 @@ impl Config {
             },
         };
 
+        let mfa = match lookup("RUSTCHAT_MFA_ENCRYPTION_KEY").filter(|v| !v.trim().is_empty()) {
+            None => None,
+            Some(raw) => {
+                let issuer = lookup("RUSTCHAT_MFA_ISSUER")
+                    .map(|value| value.trim().to_owned())
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| "RustChat".to_owned());
+                if issuer.chars().count() > 64 || issuer.contains(':') {
+                    return Err(ConfigError::InvalidMfaIssuer);
+                }
+                Some(MfaConfig {
+                    key: MfaKey::parse_hex(&raw)?,
+                    issuer,
+                })
+            }
+        };
+
         let default_api = ApiRateLimitConfig::default();
         let api_rule = |key: &str, default: RateLimitRule| -> Result<RateLimitRule, ConfigError> {
             Ok(RateLimitRule {
@@ -327,6 +388,7 @@ impl Config {
             rate_limits,
             api_rate_limits,
             email,
+            mfa,
         })
     }
 
@@ -559,6 +621,55 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn mfa_is_off_without_a_key_and_validates_the_key_and_issuer() {
+        assert_eq!(with(&[]).unwrap().mfa, None);
+        assert_eq!(
+            with(&[("RUSTCHAT_MFA_ENCRYPTION_KEY", "  ")]).unwrap().mfa,
+            None
+        );
+
+        let key = "00".repeat(31) + "ff";
+        let config = with(&[("RUSTCHAT_MFA_ENCRYPTION_KEY", &key)]).unwrap();
+        let mfa = config.mfa.expect("configured");
+        assert_eq!(mfa.issuer, "RustChat");
+        assert_eq!(mfa.key.bytes()[31], 0xff);
+        assert_eq!(mfa.key.bytes()[0], 0);
+        let named = with(&[
+            ("RUSTCHAT_MFA_ENCRYPTION_KEY", &key),
+            ("RUSTCHAT_MFA_ISSUER", "Acme Chat"),
+        ])
+        .unwrap();
+        assert_eq!(named.mfa.unwrap().issuer, "Acme Chat");
+
+        for bad in ["abc", &"zz".repeat(32), &"00".repeat(31), &"00".repeat(33)] {
+            assert_eq!(
+                with(&[("RUSTCHAT_MFA_ENCRYPTION_KEY", bad)]).unwrap_err(),
+                ConfigError::InvalidMfaKey,
+                "{bad}"
+            );
+        }
+        for issuer in ["a:b", &"x".repeat(65)] {
+            assert_eq!(
+                with(&[
+                    ("RUSTCHAT_MFA_ENCRYPTION_KEY", &key),
+                    ("RUSTCHAT_MFA_ISSUER", issuer)
+                ])
+                .unwrap_err(),
+                ConfigError::InvalidMfaIssuer
+            );
+        }
+    }
+
+    #[test]
+    fn the_mfa_key_never_appears_in_debug_output() {
+        let key = "ab".repeat(32);
+        let config = with(&[("RUSTCHAT_MFA_ENCRYPTION_KEY", &key)]).unwrap();
+        let printed = format!("{config:?}");
+        assert!(!printed.contains(&key), "{printed}");
+        assert!(printed.contains("MfaKey(<redacted>)"));
     }
 
     #[test]

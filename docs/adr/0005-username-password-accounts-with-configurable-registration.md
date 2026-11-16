@@ -11,7 +11,7 @@ The PRD left open the initial registration policy and whether email verification
 
 - Accounts are identified by a case-insensitive username (3 to 32 characters, `[a-z0-9_]`) and a password (12 to 128 characters, hashed with Argon2id).
 - Registration defaults to open and can be switched to closed with `RUSTCHAT_REGISTRATION=closed`. Invite-only and admin-created accounts are added when the invitation and admin features exist.
-- Email verification is deferred. Optional email is supported for password recovery; recovery requires configured SMTP. MFA is deferred to a later security milestone.
+- Email verification is deferred. Optional email is supported for password recovery; recovery requires configured SMTP. MFA is deferred to a later security milestone (see [ADR 0013](0013-totp-two-step-verification.md)).
 
 ## Alternatives considered
 

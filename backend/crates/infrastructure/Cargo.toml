@@ -23,6 +23,8 @@ sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio
 time = "0.3.55"
 tokio = { version = "1.54.1", features = ["rt"] }
 uuid = { version = "1.29.2", features = ["serde"] }
+totp-rs = { version = "6.0.0", default-features = false, features = ["otpauth"] }
+aes-gcm = "0.11.1"
 
 [dev-dependencies]
 tokio = { version = "1.54.1", features = ["macros", "rt"] }

@@ -6,7 +6,7 @@ Living threat model, initially drafted during Phase 0 and updated as authenticat
 
 ## 2. Scope
 
-Accounts, login, sessions, WebSocket authentication and resource authorization for the web and desktop clients. Out of scope for now: MFA, E2EE, voice tokens, bots and API tokens (each needs its own model).
+Accounts, login, sessions, WebSocket authentication and resource authorization for the web and desktop clients. Out of scope for now: E2EE, voice tokens, bots and API tokens (each needs its own model).
 
 ## 3. Assets
 
@@ -29,6 +29,7 @@ Accounts, login, sessions, WebSocket authentication and resource authorization f
 | Threat | Mitigation (planned) | Test |
 |---|---|---|
 | Credential stuffing / brute force | Rate limits per account and IP; Argon2id cost tuned to deployment | Rate-limit and lockout behaviour tests |
+| Stolen or guessed password | Two-step verification (TOTP) is optional and enabled by the server key. A password-verified login yields only a five-minute, five-attempt challenge, never a session; codes are checked in constant time, each 30-second step and each recovery code is accepted once, and wrong codes spend the same per-account failure budget as wrong passwords. Turning it off or replacing recovery codes needs the password and a current code, so a stolen session cannot remove it. Authenticator secrets are stored AES-256-GCM encrypted under a configured key (bound to the account), so a database copy alone does not reveal them; the key itself is the new secret to protect and back up, and key rotation is not implemented. Password reset does not bypass the second factor. Recovery codes (about 80 bits each, stored as SHA-256 digests) are the fallback if a device is lost; a user without them and without the authenticator needs administrator help outside the product |
 | Account enumeration | Uniform login, registration and reset responses and timing | Compare responses for known/unknown accounts |
 | Password database leak | Argon2id with per-password salt; no reversible storage | Hash format and parameter tests |
 | Session theft | Random 256-bit IDs, HttpOnly/Secure/SameSite cookies, a new token on every login, revocation and expiry | Cookie attribute, new-login token, and revocation tests |

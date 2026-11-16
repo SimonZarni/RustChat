@@ -9,9 +9,9 @@ use rustchat_application::{
     error::AppError,
     ports::{
         ActiveSession, AdminUser, AuditEvent, AuditPage, AuditUser, CommunityRepository,
-        ConversationRepository, CreateUserOutcome, EmailStatus, MessageRepository, NewSession,
-        NewUser, SessionRepository, TokenDigest, UserCredentials, UserRepository,
-        VerifyEmailOutcome,
+        ConversationRepository, CreateUserOutcome, EmailStatus, EncryptedSecret, MessageRepository,
+        MfaRepository, NewSession, NewUser, SessionRepository, TokenDigest, TotpRecord,
+        UserCredentials, UserRepository, VerifyEmailOutcome,
     },
 };
 use rustchat_domain::{
@@ -94,6 +94,269 @@ fn session_from(row: &PgRow) -> Result<Session, AppError> {
             .try_get::<OffsetDateTime, _>("expires_at")
             .map_err(db_error)?,
     })
+}
+
+/// TOTP secrets, recovery codes and login challenges for multi-factor authentication.
+#[derive(Clone)]
+pub struct PgMfaRepository {
+    pool: PgPool,
+}
+
+impl PgMfaRepository {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl MfaRepository for PgMfaRepository {
+    async fn totp(&self, user_id: UserId) -> Result<Option<TotpRecord>, AppError> {
+        let row = sqlx::query(
+            "SELECT secret_ciphertext, secret_nonce, confirmed_at, last_used_step \
+             FROM mfa_totp WHERE user_id = $1",
+        )
+        .bind(user_id.as_uuid())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_error)?;
+        row.map(|row| {
+            let nonce: Vec<u8> = row.try_get("secret_nonce").map_err(db_error)?;
+            let confirmed_at: Option<OffsetDateTime> =
+                row.try_get("confirmed_at").map_err(db_error)?;
+            Ok(TotpRecord {
+                secret: EncryptedSecret {
+                    ciphertext: row.try_get("secret_ciphertext").map_err(db_error)?,
+                    nonce: nonce.try_into().map_err(|_| {
+                        AppError::internal("stored TOTP nonce has the wrong length")
+                    })?,
+                },
+                confirmed: confirmed_at.is_some(),
+                last_used_step: row.try_get("last_used_step").map_err(db_error)?,
+            })
+        })
+        .transpose()
+    }
+
+    async fn begin_totp(
+        &self,
+        user_id: UserId,
+        secret: &EncryptedSecret,
+        now: OffsetDateTime,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            "INSERT INTO mfa_totp (user_id, secret_ciphertext, secret_nonce, created_at) \
+             VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (user_id) DO UPDATE \
+                SET secret_ciphertext = EXCLUDED.secret_ciphertext, \
+                    secret_nonce = EXCLUDED.secret_nonce, \
+                    created_at = EXCLUDED.created_at \
+                WHERE mfa_totp.confirmed_at IS NULL",
+        )
+        .bind(user_id.as_uuid())
+        .bind(&secret.ciphertext)
+        .bind(secret.nonce.as_slice())
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(db_error)?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    async fn confirm_totp(
+        &self,
+        user_id: UserId,
+        step: i64,
+        recovery_digests: &[TokenDigest],
+        now: OffsetDateTime,
+    ) -> Result<bool, AppError> {
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        let confirmed = sqlx::query(
+            "UPDATE mfa_totp SET confirmed_at = $3, last_used_step = $2 \
+             WHERE user_id = $1 AND confirmed_at IS NULL",
+        )
+        .bind(user_id.as_uuid())
+        .bind(step)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_error)?;
+        if confirmed.rows_affected() == 0 {
+            return Ok(false);
+        }
+        replace_recovery_codes_in(&mut tx, user_id, recovery_digests, now).await?;
+        tx.commit().await.map_err(db_error)?;
+        Ok(true)
+    }
+
+    async fn use_totp_step(&self, user_id: UserId, step: i64) -> Result<bool, AppError> {
+        // One atomic compare-and-set: of two concurrent requests presenting the same
+        // code, only one moves the step forward.
+        let result = sqlx::query(
+            "UPDATE mfa_totp SET last_used_step = $2 \
+             WHERE user_id = $1 AND confirmed_at IS NOT NULL \
+               AND (last_used_step IS NULL OR last_used_step < $2)",
+        )
+        .bind(user_id.as_uuid())
+        .bind(step)
+        .execute(&self.pool)
+        .await
+        .map_err(db_error)?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    async fn use_recovery_code(
+        &self,
+        user_id: UserId,
+        digest: &TokenDigest,
+        now: OffsetDateTime,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            "UPDATE mfa_recovery_codes SET used_at = $3 \
+             WHERE user_id = $1 AND code_digest = $2 AND used_at IS NULL",
+        )
+        .bind(user_id.as_uuid())
+        .bind(digest.0.as_slice())
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(db_error)?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    async fn recovery_codes_remaining(&self, user_id: UserId) -> Result<u32, AppError> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM mfa_recovery_codes WHERE user_id = $1 AND used_at IS NULL",
+        )
+        .bind(user_id.as_uuid())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db_error)?;
+        Ok(u32::try_from(count).unwrap_or(u32::MAX))
+    }
+
+    async fn replace_recovery_codes(
+        &self,
+        user_id: UserId,
+        digests: &[TokenDigest],
+        now: OffsetDateTime,
+    ) -> Result<(), AppError> {
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        replace_recovery_codes_in(&mut tx, user_id, digests, now).await?;
+        tx.commit().await.map_err(db_error)
+    }
+
+    async fn disable_totp(&self, user_id: UserId) -> Result<(), AppError> {
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        for statement in [
+            "DELETE FROM mfa_challenges WHERE user_id = $1",
+            "DELETE FROM mfa_recovery_codes WHERE user_id = $1",
+            "DELETE FROM mfa_totp WHERE user_id = $1",
+        ] {
+            sqlx::query(statement)
+                .bind(user_id.as_uuid())
+                .execute(&mut *tx)
+                .await
+                .map_err(db_error)?;
+        }
+        tx.commit().await.map_err(db_error)
+    }
+
+    async fn create_challenge(
+        &self,
+        user_id: UserId,
+        digest: TokenDigest,
+        now: OffsetDateTime,
+        expires_at: OffsetDateTime,
+    ) -> Result<(), AppError> {
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        // Expired challenges, and all but the newest few of this user's, are discarded.
+        sqlx::query("DELETE FROM mfa_challenges WHERE expires_at <= $1")
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_error)?;
+        sqlx::query(
+            "DELETE FROM mfa_challenges WHERE user_id = $1 AND id NOT IN \
+             (SELECT id FROM mfa_challenges WHERE user_id = $1 ORDER BY created_at DESC, id DESC LIMIT 4)",
+        )
+        .bind(user_id.as_uuid())
+        .execute(&mut *tx)
+        .await
+        .map_err(db_error)?;
+        sqlx::query(
+            "INSERT INTO mfa_challenges (id, user_id, token_digest, created_at, expires_at) \
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(user_id.as_uuid())
+        .bind(digest.0.as_slice())
+        .bind(now)
+        .bind(expires_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_error)?;
+        tx.commit().await.map_err(db_error)
+    }
+
+    async fn attempt_challenge(
+        &self,
+        digest: &TokenDigest,
+        now: OffsetDateTime,
+        max_attempts: i32,
+    ) -> Result<Option<User>, AppError> {
+        let row = sqlx::query(
+            "UPDATE mfa_challenges c SET attempts = c.attempts + 1 \
+             FROM users u \
+             WHERE c.token_digest = $1 AND c.expires_at > $2 AND c.attempts < $3 \
+               AND u.id = c.user_id \
+               AND u.deleted_at IS NULL AND u.deactivated_at IS NULL AND u.suspended_at IS NULL \
+             RETURNING u.id, u.username, u.created_at",
+        )
+        .bind(digest.0.as_slice())
+        .bind(now)
+        .bind(max_attempts)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_error)?;
+        row.map(|row| user_from(&row, "id", "username", "created_at"))
+            .transpose()
+    }
+
+    async fn delete_challenge(&self, digest: &TokenDigest) -> Result<(), AppError> {
+        sqlx::query("DELETE FROM mfa_challenges WHERE token_digest = $1")
+            .bind(digest.0.as_slice())
+            .execute(&self.pool)
+            .await
+            .map_err(db_error)?;
+        Ok(())
+    }
+}
+
+async fn replace_recovery_codes_in(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: UserId,
+    digests: &[TokenDigest],
+    now: OffsetDateTime,
+) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM mfa_recovery_codes WHERE user_id = $1")
+        .bind(user_id.as_uuid())
+        .execute(&mut **tx)
+        .await
+        .map_err(db_error)?;
+    for digest in digests {
+        sqlx::query(
+            "INSERT INTO mfa_recovery_codes (id, user_id, code_digest, created_at) \
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(user_id.as_uuid())
+        .bind(digest.0.as_slice())
+        .bind(now)
+        .execute(&mut **tx)
+        .await
+        .map_err(db_error)?;
+    }
+    Ok(())
 }
 
 /// Builds a page from rows fetched with one extra row to detect a following page.
@@ -2920,5 +3183,170 @@ mod tests {
             .insert(new_session(alice.id, 5, TimeDuration::hours(1)))
             .await;
         assert!(again.is_err());
+    }
+
+    fn sealed(byte: u8) -> EncryptedSecret {
+        EncryptedSecret {
+            ciphertext: vec![byte; 36],
+            nonce: [byte; 12],
+        }
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn totp_enrolment_confirms_once_and_never_replaces_a_confirmed_secret(pool: PgPool) {
+        let users = PgUserRepository::new(pool.clone());
+        let mfa = PgMfaRepository::new(pool);
+        let alice = add_user(&users, "alice").await;
+
+        assert!(mfa.totp(alice.id).await.unwrap().is_none());
+        assert!(mfa.begin_totp(alice.id, &sealed(1), now()).await.unwrap());
+        // A pending secret can be restarted.
+        assert!(mfa.begin_totp(alice.id, &sealed(2), now()).await.unwrap());
+        let pending = mfa.totp(alice.id).await.unwrap().unwrap();
+        assert_eq!(pending.secret, sealed(2));
+        assert!(!pending.confirmed);
+        // An unconfirmed secret cannot be used for a step.
+        assert!(!mfa.use_totp_step(alice.id, 10).await.unwrap());
+
+        let digests = [TokenDigest([1; 32]), TokenDigest([2; 32])];
+        assert!(
+            mfa.confirm_totp(alice.id, 10, &digests, now())
+                .await
+                .unwrap()
+        );
+        assert!(
+            !mfa.confirm_totp(alice.id, 11, &digests, now())
+                .await
+                .unwrap()
+        );
+        assert!(!mfa.begin_totp(alice.id, &sealed(3), now()).await.unwrap());
+        let confirmed = mfa.totp(alice.id).await.unwrap().unwrap();
+        assert!(confirmed.confirmed);
+        assert_eq!(
+            confirmed.secret,
+            sealed(2),
+            "the confirmed secret is untouched"
+        );
+        assert_eq!(confirmed.last_used_step, Some(10));
+        assert_eq!(mfa.recovery_codes_remaining(alice.id).await.unwrap(), 2);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn a_totp_step_and_a_recovery_code_are_accepted_once(pool: PgPool) {
+        let users = PgUserRepository::new(pool.clone());
+        let mfa = PgMfaRepository::new(pool);
+        let alice = add_user(&users, "alice").await;
+        let bobby = add_user(&users, "bobby").await;
+        mfa.begin_totp(alice.id, &sealed(1), now()).await.unwrap();
+        mfa.confirm_totp(alice.id, 10, &[TokenDigest([9; 32])], now())
+            .await
+            .unwrap();
+
+        for (step, accepted) in [(10, false), (9, false), (11, true), (11, false), (12, true)] {
+            assert_eq!(
+                mfa.use_totp_step(alice.id, step).await.unwrap(),
+                accepted,
+                "step {step}"
+            );
+        }
+        assert!(
+            !mfa.use_totp_step(bobby.id, 50).await.unwrap(),
+            "no secret, no step"
+        );
+
+        assert!(
+            !mfa.use_recovery_code(bobby.id, &TokenDigest([9; 32]), now())
+                .await
+                .unwrap()
+        );
+        assert!(
+            mfa.use_recovery_code(alice.id, &TokenDigest([9; 32]), now())
+                .await
+                .unwrap()
+        );
+        assert!(
+            !mfa.use_recovery_code(alice.id, &TokenDigest([9; 32]), now())
+                .await
+                .unwrap()
+        );
+        assert_eq!(mfa.recovery_codes_remaining(alice.id).await.unwrap(), 0);
+
+        mfa.replace_recovery_codes(alice.id, &[TokenDigest([5; 32])], now())
+            .await
+            .unwrap();
+        assert_eq!(mfa.recovery_codes_remaining(alice.id).await.unwrap(), 1);
+        mfa.disable_totp(alice.id).await.unwrap();
+        assert!(mfa.totp(alice.id).await.unwrap().is_none());
+        assert_eq!(mfa.recovery_codes_remaining(alice.id).await.unwrap(), 0);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn challenges_allow_limited_attempts_expire_and_need_an_active_user(pool: PgPool) {
+        let users = PgUserRepository::new(pool.clone());
+        let mfa = PgMfaRepository::new(pool);
+        let alice = add_user(&users, "alice").await;
+        let digest = TokenDigest([3; 32]);
+        let start = now();
+        mfa.create_challenge(alice.id, digest, start, start + TimeDuration::minutes(5))
+            .await
+            .unwrap();
+
+        for attempt in 1..=3 {
+            let user = mfa.attempt_challenge(&digest, start, 3).await.unwrap();
+            assert_eq!(
+                user.map(|u| u.username.as_str().to_owned()).as_deref(),
+                Some("alice"),
+                "attempt {attempt}"
+            );
+        }
+        assert!(
+            mfa.attempt_challenge(&digest, start, 3)
+                .await
+                .unwrap()
+                .is_none(),
+            "attempts spent"
+        );
+
+        let fresh = TokenDigest([4; 32]);
+        mfa.create_challenge(alice.id, fresh, start, start + TimeDuration::minutes(5))
+            .await
+            .unwrap();
+        assert!(
+            mfa.attempt_challenge(&fresh, start + TimeDuration::minutes(5), 3)
+                .await
+                .unwrap()
+                .is_none(),
+            "expired"
+        );
+        assert!(
+            mfa.attempt_challenge(&TokenDigest([8; 32]), start, 3)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        // A suspended user's challenge no longer works.
+        let user_repo = PgUserRepository::new(mfa.pool.clone());
+        sqlx::query("UPDATE users SET suspended_at = now() WHERE id = $1")
+            .bind(alice.id.as_uuid())
+            .execute(&user_repo.pool)
+            .await
+            .unwrap();
+        mfa.create_challenge(
+            alice.id,
+            TokenDigest([5; 32]),
+            start,
+            start + TimeDuration::minutes(5),
+        )
+        .await
+        .unwrap();
+        assert!(
+            mfa.attempt_challenge(&TokenDigest([5; 32]), start, 3)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        mfa.delete_challenge(&TokenDigest([5; 32])).await.unwrap();
     }
 }

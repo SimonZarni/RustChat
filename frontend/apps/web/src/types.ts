@@ -50,6 +50,8 @@ export type InstanceUser = {
 }
 export type ReadCursor = { user_id: string; sequence: number }
 export type EmailStatus = { email: string | null; verified: boolean }
+export type MfaStatus = { available: boolean; enabled: boolean; recovery_codes_remaining: number }
+export type LoginResponse = { user: User } | { mfa_required: true; mfa_token: string }
 export type AuditUser = { id: string; username: string }
 export type AuditEvent = {
   id: string

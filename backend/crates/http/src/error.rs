@@ -163,6 +163,26 @@ impl IntoResponse for ApiError {
                     "EMAIL_ADDRESS_IN_USE",
                     "Another account has already verified this email address.",
                 ),
+                AppError::MfaRequired => body(
+                    StatusCode::UNAUTHORIZED,
+                    "MFA_REQUIRED",
+                    "A verification code is required to sign in.",
+                ),
+                AppError::MfaUnavailable => body(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "MFA_UNAVAILABLE",
+                    "Multi-factor authentication is not configured on this server.",
+                ),
+                AppError::MfaAlreadyEnabled => body(
+                    StatusCode::CONFLICT,
+                    "MFA_ALREADY_ENABLED",
+                    "Multi-factor authentication is already enabled.",
+                ),
+                AppError::InvalidMfaCode => body(
+                    StatusCode::UNAUTHORIZED,
+                    "INVALID_MFA_CODE",
+                    "The verification code is invalid or has expired.",
+                ),
                 AppError::InvalidAccountToken => body(
                     StatusCode::BAD_REQUEST,
                     "INVALID_ACCOUNT_TOKEN",

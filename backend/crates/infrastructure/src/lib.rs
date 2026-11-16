@@ -1,6 +1,7 @@
 //! RustChat infrastructure: implementations of application ports.
 
 pub mod email;
+pub mod mfa;
 pub mod postgres;
 pub mod ratelimit;
 pub mod security;

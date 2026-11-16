@@ -109,6 +109,28 @@ impl TokenService for OsTokenService {
         NewToken { raw, digest }
     }
 
+    fn recovery_code(&self) -> String {
+        // 31 unambiguous characters (no i, l, o, 0, 1). Rejection sampling keeps every
+        // character equally likely: 248 = 31 * 8 is the largest multiple of 31 that fits.
+        const ALPHABET: &[u8; 31] = b"abcdefghjkmnpqrstuvwxyz23456789";
+        let mut code = String::with_capacity(19);
+        let mut produced = 0;
+        while produced < 16 {
+            let mut buffer = [0u8; 32];
+            getrandom::fill(&mut buffer).expect("operating system random number generator failed");
+            for byte in buffer {
+                if byte < 248 && produced < 16 {
+                    if produced > 0 && produced % 4 == 0 {
+                        code.push('-');
+                    }
+                    code.push(char::from(ALPHABET[usize::from(byte) % 31]));
+                    produced += 1;
+                }
+            }
+        }
+        code
+    }
+
     fn digest(&self, raw: &str) -> TokenDigest {
         TokenDigest(Sha256::digest(raw.as_bytes()).into())
     }
@@ -208,5 +230,26 @@ mod tests {
         assert_eq!(a.raw.len(), 43, "256 bits as unpadded base64url");
         assert_eq!(a.digest, service.digest(&a.raw));
         assert_ne!(a.digest, b.digest);
+    }
+
+    #[test]
+    fn recovery_codes_are_grouped_unambiguous_and_distinct() {
+        let service = OsTokenService;
+        let codes: Vec<String> = (0..200).map(|_| service.recovery_code()).collect();
+        for code in &codes {
+            assert_eq!(code.len(), 19, "{code}");
+            for (index, character) in code.chars().enumerate() {
+                if index % 5 == 4 {
+                    assert_eq!(character, '-', "{code}");
+                } else {
+                    assert!(
+                        "abcdefghjkmnpqrstuvwxyz23456789".contains(character),
+                        "{character:?} in {code}"
+                    );
+                }
+            }
+        }
+        let distinct: std::collections::HashSet<_> = codes.iter().collect();
+        assert_eq!(distinct.len(), codes.len());
     }
 }

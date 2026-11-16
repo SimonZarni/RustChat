@@ -1118,6 +1118,8 @@ implementation.
     [ADR 0005](adr/0005-username-password-accounts-with-configurable-registration.md)
     [ADR 0010](adr/0010-optional-email-password-recovery.md) and
     [ADR 0012](adr/0012-email-verification.md).
+-   Optional TOTP two-step verification with recovery codes is included now;
+    see [ADR 0013](adr/0013-totp-two-step-verification.md).
 -   Production authentication rate limits use shared PostgreSQL storage,
     while WebSocket fan-out remains single-instance. See
     [ADR 0006](adr/0006-in-process-rate-limiting-behind-a-port.md) and

@@ -45,6 +45,14 @@ pub enum AppError {
     InvalidAccountToken,
     #[error("email address is already verified by another account")]
     EmailAddressInUse,
+    #[error("a second factor is required")]
+    MfaRequired,
+    #[error("multi-factor authentication is not configured on this server")]
+    MfaUnavailable,
+    #[error("multi-factor authentication is already enabled")]
+    MfaAlreadyEnabled,
+    #[error("the verification code is invalid or has expired")]
+    InvalidMfaCode,
     #[error("conversation request is invalid")]
     InvalidConversationRequest,
     #[error("conversation member limit reached")]

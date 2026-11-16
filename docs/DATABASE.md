@@ -83,6 +83,8 @@ Account deletion is a logical tombstone. User identity fields are replaced, prof
 
 `account_tokens` stores SHA-256 digests of single-use tokens with a `purpose` (`password_reset` or `email_verification`), creation, expiry, and consumption timestamps; an `email_verification` token also records the address it verifies, so changing the address invalidates it. Raw reset tokens are sent only through the configured email delivery service and are never stored. A successful reset and revocation of the account's sessions happen in one transaction.
 
+`mfa_totp`, `mfa_recovery_codes` and `mfa_challenges` (migration `0023_mfa.sql`) back two-step verification. `mfa_totp` holds one row per user with the authenticator secret **encrypted** (AES-256-GCM with a server key from configuration, authenticated against the owning user id so a ciphertext copied to another account does not open) plus its random nonce, a `confirmed_at` that stays null until the owner proves the authenticator works (only confirmed rows affect login), and `last_used_step`, the highest accepted 30-second time step, updated with a compare-and-set so each code is accepted once. `mfa_recovery_codes` stores only SHA-256 digests of single-use codes. `mfa_challenges` parks a password-verified login for five minutes: a token digest, an expiry and an attempt counter. All three cascade with the user.
+
 `rate_limit_entries` stores SHA-256 digests of authentication limiter keys, fixed-window counts and expiration timestamps. The PostgreSQL adapter shares counters across processes using the same database and deletes expired rows as it records new attempts. It does not retain raw usernames or client network addresses.
 
 **`conversations` and `conversation_members`**

@@ -20,6 +20,7 @@ The Compose stack builds the Rust API and web client, serves HTTPS through Caddy
 | `RUSTCHAT_REGISTRATION` | `open` | `open` or `closed` account registration |
 | `RUSTCHAT_DB_MAX_CONNECTIONS` | `10` | PostgreSQL pool size |
 | `RUSTCHAT_GROUP_MEMBER_LIMIT` | `100` | Group conversation cap, 2–500 |
+| `RUSTCHAT_MFA_ENCRYPTION_KEY`, `RUSTCHAT_MFA_ISSUER` | empty, `RustChat` | Two-step verification with authenticator apps; see below |
 | `RUSTCHAT_SESSION_IDLE_TIMEOUT_DAYS` | `7` | Days of inactivity after which a session ends, 1–30 (the absolute lifetime is 30 days) |
 | `RUSTCHAT_LOGIN_PER_IP_LIMIT`, `RUSTCHAT_LOGIN_PER_USERNAME_LIMIT`, `RUSTCHAT_REGISTER_PER_IP_LIMIT` | `30`, `10`, `5` | Authentication rate-limit thresholds (windows are fixed) |
 | `RUSTCHAT_API_READ_LIMIT`, `RUSTCHAT_API_WRITE_LIMIT`, `RUSTCHAT_MESSAGE_SEND_LIMIT`, `RUSTCHAT_CREATE_LIMIT`, `RUSTCHAT_UNAUTHENTICATED_LIMIT` | `600`, `120`, `60`, `30`, `120` | General API budgets: reads, other writes and message sends per user per minute, creations per user per hour, and failed-authentication requests per client network per minute. Counted in each server process's memory, so they apply per instance |
@@ -27,6 +28,8 @@ The Compose stack builds the Rust API and web client, serves HTTPS through Caddy
 | `RUSTCHAT_SERVER_IMAGE`, `RUSTCHAT_WEB_IMAGE` | local build tags | Release image tags |
 
 Set by `compose.yml` and not meant to be changed: `RUSTCHAT_BIND`, `RUSTCHAT_COOKIE_SECURE=true`, `RUSTCHAT_ALLOWED_ORIGINS`, and `RUSTCHAT_TRUSTED_PROXY_HOPS=1`. The last one makes the server take the client address from the `X-Forwarded-For` entry that Caddy appends, so authentication rate limits apply per client rather than to Caddy's address as a whole. It is safe only because port 8080 is not published; do not expose the server port directly or put another proxy in front of Caddy without adjusting it.
+
+**Two-step verification** is off until you set `RUSTCHAT_MFA_ENCRYPTION_KEY` to 64 hexadecimal characters (`openssl rand -hex 32`). The key encrypts each user's authenticator secret before it is stored (AES-256-GCM, bound to the account), so a copy of the database alone does not reveal them. Treat it like a password: keep it out of source control and **back it up separately from the database** — if it is lost or changed, enrolled authenticators can no longer be verified and users can only sign in with their recovery codes, after which they must set up again. Rotating the key is not supported yet. Without a key the settings screen says the server has not been set up for authenticator apps, and sign-in is unchanged.
 
 **Password-recovery email** is optional and off by default. Set `RUSTCHAT_SMTP_HOST`, `RUSTCHAT_EMAIL_FROM` and `RUSTCHAT_PUBLIC_URL` (the HTTPS URL used in reset links) together; the server refuses to start with only some of them. `RUSTCHAT_SMTP_PORT` defaults to `465`. `RUSTCHAT_SMTP_USERNAME` and `RUSTCHAT_SMTP_PASSWORD` must be set together or not at all. Without this configuration the password-reset request endpoint returns `503 EMAIL_UNAVAILABLE`.
 

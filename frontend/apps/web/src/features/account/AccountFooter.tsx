@@ -5,6 +5,7 @@ import type { Theme } from '../../lib/useTheme'
 import type { User, UserProfile } from '../../types'
 import { AccountActionsSection } from './AccountActionsSection'
 import { EmailSection } from './EmailSection'
+import { MfaSection } from './MfaSection'
 import { InstanceAdminSection } from './InstanceAdminSection'
 import { PrivacySection } from './PrivacySection'
 import { ProfileSection } from './ProfileSection'
@@ -50,6 +51,7 @@ export function AccountFooter({ user, theme, onThemeChange, onUserChange, onSign
       </details>
       <SecuritySection onError={onError} />
       <EmailSection onError={onError} />
+      <MfaSection onError={onError} />
       <AccountActionsSection onError={onError} onAccountClosed={onAccountClosed} />
       <PrivacySection onError={onError} />
       <InstanceAdminSection onError={onError} />
