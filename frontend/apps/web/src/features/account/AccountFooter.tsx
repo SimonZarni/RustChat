@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, errorMessage } from '../../lib/api'
 import { initial } from '../../lib/ids'
 import type { Theme } from '../../lib/useTheme'
@@ -10,6 +10,7 @@ import { InstanceAdminSection } from './InstanceAdminSection'
 import { PrivacySection } from './PrivacySection'
 import { ProfileSection } from './ProfileSection'
 import { SecuritySection } from './SecuritySection'
+import { usePanelGroup } from './usePanelGroup'
 
 type Props = {
   user: User
@@ -24,6 +25,8 @@ type Props = {
 /** Sidebar footer: profile, appearance, security, privacy, account and instance administration. */
 export function AccountFooter({ user, theme, onThemeChange, onUserChange, onSignOut, onAccountClosed, onError }: Props) {
   const [profile, setProfile] = useState<UserProfile | null>(null)
+  const footerRef = useRef<HTMLElement | null>(null)
+  usePanelGroup(footerRef)
 
   useEffect(() => {
     let alive = true
@@ -34,7 +37,7 @@ export function AccountFooter({ user, theme, onThemeChange, onUserChange, onSign
   }, [user.id, onError])
 
   return (
-    <footer className="sidebar-profile">
+    <footer className="sidebar-profile" ref={footerRef}>
       <div className="profile-avatar">{initial(user.username)}</div>
       <div className="profile-copy"><strong>{profile?.display_name || user.username}</strong><span>@{user.username}</span></div>
       {profile && <ProfileSection user={user} profile={profile} onProfileChange={setProfile} onUserChange={onUserChange} onError={onError} />}
