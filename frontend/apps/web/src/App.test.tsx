@@ -203,7 +203,8 @@ describe('App', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Manage' }))
     expect(await screen.findByRole('heading', { name: 'Manage Study Room' })).toBeInTheDocument()
-    expect(screen.getByText(/Active · 2\/10 uses/)).toBeInTheDocument()
+    // Invitations load after the (lazily loaded) dialog opens.
+    expect(await screen.findByText(/Active · 2\/10 uses/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Revoke' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/v1/communities/community-1/invites/invite-1', expect.objectContaining({ method: 'DELETE' })))
     expect(await screen.findByText(/Revoked · 2\/10 uses/)).toBeInTheDocument()
@@ -350,6 +351,9 @@ describe('App', () => {
     render(<App />)
     expect(await screen.findByRole('heading', { name: 'Messages' })).toBeInTheDocument()
     await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0))
+    // Wait for the initial history and cursors so the change below can only arrive through the reconnect.
+    await screen.findByText('Hello')
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith('/read-cursors')).length).toBeGreaterThanOrEqual(1))
     expect(screen.queryByText('Seen by 1')).not.toBeInTheDocument()
 
     durableReadSequence = 1

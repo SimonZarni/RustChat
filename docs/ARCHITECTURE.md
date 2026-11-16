@@ -160,10 +160,27 @@ frontend/
 
 Create feature modules as they are implemented; avoid empty placeholder packages.
 
+**Current state:** a single app, `frontend/apps/web/src`, organised by feature rather than the package layout above:
+
+```text
+src/
+├── App.tsx              application shell: session lifecycle and layout
+├── types.ts             API resource types
+├── lib/                 API client, ids, formatting, permission bits, theme
+├── components/          shared UI (accessible modal Dialog)
+└── features/
+    ├── auth/            sign-in, registration, password recovery
+    ├── account/         profile, security, privacy, account actions, instance admin
+    ├── conversations/   conversation list, new-conversation dialog
+    ├── messages/        message list/composer, Markdown rendering, conversation state
+    ├── communities/     community/channel sidebar, dialogs, management dialog (lazy loaded)
+    └── realtime/        WebSocket connection and event routing
+```
+
 ### Current frontend state boundaries
 
-- React component state and `fetch`: remote data and local UI state.
-- `App.tsx`: WebSocket lifecycle, incoming event handling and reconnect synchronization.
+- React component state and `fetch`: remote data and local UI state. A feature keeps its own form state in its component; shared server state lives in hooks (`useConversation`, `useCommunities`).
+- `features/realtime/useRealtime.ts`: WebSocket lifecycle, incoming event handling and reconnect synchronization.
 - TanStack Query, Zustand and Zod are not current dependencies; consider them only if the frontend's needs justify their adoption.
 
 The frontend is not a security boundary. The backend must independently validate and authorize every operation.
