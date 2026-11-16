@@ -180,6 +180,14 @@ test('browser workflow creates a conversation, sends a message, and creates a co
   await composer.fill('Hello from the browser journey')
   await composer.press('Enter')
   await expect(page.getByText('Hello from the browser journey')).toBeVisible()
+
+  // Message actions follow the pointer: shown on hover, hidden again once it leaves, even after a click.
+  const toolbar = page.getByRole('group', { name: 'Message actions' }).last()
+  await page.getByText('Hello from the browser journey').click()
+  await page.mouse.move(5, 5)
+  await expect(toolbar).toHaveCSS('opacity', '0')
+  await page.getByText('Hello from the browser journey').hover()
+  await expect(toolbar).toHaveCSS('opacity', '1')
   const messageLog = page.getByRole('log')
   await expect(messageLog).toHaveAttribute('aria-live', 'polite')
   await expect(messageLog).toHaveAttribute('aria-label', /Messages in/)

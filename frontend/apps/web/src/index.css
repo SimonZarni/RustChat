@@ -423,7 +423,7 @@ html[data-theme='dark'] .manager-section > label { color: var(--muted); }
 /* Message actions: a small floating group, visible on hover, focus or after a tap. */
 .message-status { display: flex; gap: 10px; margin-top: 3px; color: var(--muted); font-size: 10px; }
 .message-toolbar { position: absolute; z-index: 5; top: -14px; right: 6px; display: flex; gap: 1px; padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: 0 2px 8px rgba(20, 30, 40, .1); opacity: 0; pointer-events: none; transition: opacity .12s; }
-.message-row:hover .message-toolbar, .message-row:focus-within .message-toolbar, .message-row.active .message-toolbar { opacity: 1; pointer-events: auto; }
+.message-row:hover .message-toolbar, .message-row:focus-within .message-toolbar { opacity: 1; pointer-events: auto; }
 .toolbar-button { width: 28px; height: 28px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
 .toolbar-button:hover, .toolbar-button[aria-expanded='true'] { background: var(--accent-soft); color: var(--ink); }
 .reaction-picker { top: calc(100% + 6px); right: 0; bottom: auto; left: auto; }
