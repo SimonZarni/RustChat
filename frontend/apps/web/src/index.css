@@ -215,7 +215,7 @@ kbd { padding: 2px 5px; border: 1px solid #e2e5e7; border-radius: 4px; backgroun
 .message-placeholder strong { color: #515a61; font-size: 12px; }
 .message-placeholder > span:last-child { line-height: 1.6; }
 .message-composer { margin: 0 clamp(15px, 4vw, 56px) 18px; padding: 11px 12px 9px; border: 1px solid #dfe3e6; border-radius: 7px; background: white; transition: border-color .15s; }
-.message-composer:focus-within { border-color: #aeb9c3; }
+.message-composer:focus-within { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
 .message-composer textarea { width: 100%; min-height: 38px; max-height: 160px; resize: vertical; padding: 3px 2px 7px; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 12px; line-height: 1.6; }
 .message-composer textarea::placeholder { color: #a0a6ab; }
 .composer-footer { display: flex; align-items: center; justify-content: space-between; color: #687178; font-size: 9px; }
