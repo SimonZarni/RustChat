@@ -51,7 +51,8 @@ jobs:
       # setting all users share one rate-limit bucket.
       - name: Compose keeps trusted proxy hops configured
         working-directory: .
-        run: grep -q 'RUSTCHAT_TRUSTED_PROXY_HOPS: "1"' deployment/compose.yml
+        run: |
+          grep -q 'RUSTCHAT_TRUSTED_PROXY_HOPS: "1"' deployment/compose.yml
 
   frontend:
     runs-on: ubuntu-latest
