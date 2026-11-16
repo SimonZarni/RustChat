@@ -1,6 +1,6 @@
 # Self-hosted deployment baseline
 
-The Compose stack builds the Rust API and web client, serves HTTPS through Caddy, and keeps PostgreSQL off the host network. It is a single-instance baseline: authentication rate limits are shared through PostgreSQL, while WebSocket fan-out and presence remain process-local.
+The Compose stack builds the Rust API and web client, serves HTTPS through Caddy, and keeps PostgreSQL off the host network. One `server` container is the default, and several can run against the same database (see "Running more than one server instance"): authentication rate limits, realtime events, outbox dispatch and presence are all coordinated through PostgreSQL.
 
 ## First start
 
@@ -47,6 +47,25 @@ Create a PostgreSQL custom-format backup with `./deployment/backup.ps1`. Store c
 
 To restore, stop the server and run `./deployment/restore.ps1 -BackupFile <path>`. This replaces database contents. Afterward, start the stack and check health and sign-in. For operational validation, restore a recent backup into an isolated test instance and verify migrations, account sign-in, and message history before relying on the backup process.
 
+### Verifying backups automatically
+
+A backup you have never restored is a hope, not a backup. `deployment/verify-backup.sh <file>` restores a dump into a **throwaway database** on the same PostgreSQL server (the live database is never touched), runs consistency checks, drops the scratch database and exits non-zero if anything is wrong. It checks that the file is readable (and, with `RUSTCHAT_MAX_BACKUP_AGE_HOURS`, recent), that `pg_restore` finishes without errors, that every migration is recorded as successful (matching the number of migration files when run from the repository, or `RUSTCHAT_EXPECTED_MIGRATIONS`), that the core tables exist, that no message points at a missing conversation, that conversation counters are not behind their messages, that the application database role can use the restored tables, and that the backup contains users (`RUSTCHAT_ALLOW_EMPTY_BACKUP=1` for a brand new instance). It prints how long the restore took.
+
+```sh
+RUSTCHAT_ENV_FILE=deployment/.env deployment/backup.sh /srv/rustchat-backups        # take a backup (Linux and macOS)
+RUSTCHAT_ENV_FILE=deployment/.env RUSTCHAT_MAX_BACKUP_AGE_HOURS=26     deployment/verify-backup.sh "$(ls -t /srv/rustchat-backups/*.dump | head -1)"     # verify the newest one
+```
+
+Run both from cron (for example backup at 02:00, verify at 02:30) and alert on a non-zero exit. `backup.sh`, `restore.sh` and `verify-backup.sh` are the POSIX counterparts of the PowerShell scripts; set `PGHOST` (and `PGUSER`, `PGPASSWORD`) to use them against a PostgreSQL server directly instead of the Compose database. The continuous-integration `restore-check` job runs the same scripts on every change: it migrates a fresh database, creates data through the API, backs it up, verifies the restore, and confirms a damaged dump is rejected.
+
+### Recovery objectives
+
+These are targets for you to confirm on your own hardware, not guarantees:
+
+- **Recovery point objective (RPO):** at most the time since the last good backup. With the daily schedule above, up to 24 hours of messages and changes can be lost. Run backups more often if that is too much; every dump is a full copy, so size and frequency trade against each other. There is no continuous archiving (point-in-time recovery) in this baseline.
+- **Recovery time objective (RTO):** the time to start a database, restore the newest dump and restart the stack. `verify-backup.sh` reports the restore step; on a small test instance it took a few seconds, and it grows with the database size, so re-measure as yours grows. Add the time to provision a replacement host and restore DNS if the whole host is lost, and keep the `.env` file, the Caddy volume (certificates) and `RUSTCHAT_MFA_ENCRYPTION_KEY` backed up separately: a database dump alone does not restore two-step verification.
+- Keep copies off the host, encrypted, and rehearse a full restore onto a spare machine at least once.
+
 ## Upgrade and rollback
 
 Keep a copy of the current `deployment/.env` and the exact server and web image tags used by that release. Use a new, immutable tag for each release; do not reuse `latest` or overwrite a tag that may be needed for rollback. The example environment file has separate `RUSTCHAT_SERVER_IMAGE` and `RUSTCHAT_WEB_IMAGE` settings so Compose can retain both versions. It also exposes the database connection pool size, group member cap, and login/registration rate thresholds; rate-limit windows remain fixed in this baseline.
@@ -62,10 +81,19 @@ Upgrade in this order:
 
 Database migrations are forward-only in this baseline. If a release fails after a migration has changed the schema, stop the API, restore the pre-upgrade backup with `./deployment/restore.ps1 -BackupFile <backup-path>`, restore the saved environment file with the previous image tags, then start `server` and `web` again. This replaces the database with its pre-upgrade state, so writes made after that backup are lost. If the migration did not run or made no schema change, redeploy the previous tagged images without restoring the database. Test this rollback procedure on an isolated copy before using it for a production incident.
 
+## Running more than one server instance
+
+The server is stateless apart from PostgreSQL, so you can run several replicas for capacity or to upgrade without downtime: `docker compose --env-file deployment/.env -f deployment/compose.yml up -d --scale server=2`. Caddy discovers the replicas through Docker DNS and spreads connections across them; WebSocket clients need no sticky routing. Realtime events, outbox dispatch and presence are coordinated through PostgreSQL (ADR 0014), so a message sent through one replica reaches clients connected to another.
+
+- Each replica opens its own database pool (`RUSTCHAT_DB_MAX_CONNECTIONS`, default 10) plus a connection that listens for events, so size PostgreSQL's `max_connections` for all replicas together.
+- The general API rate limits (reads, writes, sends, creations) are counted per replica, so the effective limit grows with the replica count; the authentication limits are shared.
+- A replica that crashes leaves its users "online" for up to a minute without an offline event, and requests in flight to a replica that is stopped can fail once (an HTTP 502) before Caddy stops using it; clients retry and WebSockets reconnect and resynchronize.
+- Run the `migrate` job once, before starting new replicas of a release that adds migrations.
+
 ## Operations and limits
 
 - Migrations are explicit: run the `migrate` profile before starting a release that adds migrations. The server does not migrate automatically.
 - Keep release-specific image tags and a pre-upgrade database backup; this runbook does not make schema migrations reversible.
 - PostgreSQL data and Caddy certificates/configuration persist in named volumes.
 - Use a firewall, restrict host access, rotate secrets, monitor disk space, and retain encrypted off-host backups.
-- The server exposes low-cardinality HTTP response totals at `/metrics` on the private Compose network; Caddy blocks external access. This baseline does not provide multi-instance fan-out, external rate limiting, alerting, or a tested disaster-recovery objective. Those need a separate operational phase.
+- The server exposes low-cardinality HTTP response totals at `/metrics` on the private Compose network; Caddy blocks external access. This baseline does not provide external rate limiting, alerting, or a tested disaster-recovery objective. Those need a separate operational phase.

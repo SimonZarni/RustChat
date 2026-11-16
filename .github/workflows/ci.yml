@@ -113,3 +113,89 @@ jobs:
       - name: pnpm audit (moderate and above)
         working-directory: frontend
         run: pnpm audit --audit-level moderate
+
+  # Proves the backup tooling works on a real database: migrate, create data
+  # through the API, back it up, and restore the dump into a scratch database
+  # with the same checks operators run (deployment/verify-backup.sh).
+  restore-check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: rustchat
+          POSTGRES_PASSWORD: ci-superuser
+          POSTGRES_DB: rustchat
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rustchat -d rustchat"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      PGUSER: rustchat
+      PGPASSWORD: ci-superuser
+      PGDATABASE: rustchat
+      # The runner's PostgreSQL client may be older than the server; dump and restore
+      # with the matching version.
+      RUSTCHAT_PG_PREFIX: docker run --rm -i --network host -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGDATABASE postgres:18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+      - name: Create the application and migration roles, as the Compose stack does
+        env:
+          POSTGRES_USER: rustchat
+          POSTGRES_DB: rustchat
+          RUSTCHAT_APP_DB_PASSWORD: ci-app
+          RUSTCHAT_MIGRATOR_DB_PASSWORD: ci-migrator
+        run: sh deployment/postgres-init.sh
+      - name: Build the server
+        working-directory: backend
+        run: cargo build -p rustchat-server
+      - name: Apply migrations as the migration role
+        env:
+          DATABASE_URL: postgres://rustchat_migrator:ci-migrator@127.0.0.1:5432/rustchat
+        run: backend/target/debug/rustchat-server migrate
+      - name: Start the server as the application role
+        env:
+          DATABASE_URL: postgres://rustchat_app:ci-app@127.0.0.1:5432/rustchat
+          RUSTCHAT_ALLOWED_ORIGINS: http://localhost:8080
+          RUSTCHAT_COOKIE_SECURE: "false"
+          RUSTCHAT_BIND: 127.0.0.1:8080
+        run: |
+          backend/target/debug/rustchat-server serve > server.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -fs http://127.0.0.1:8080/readyz && exit 0
+            sleep 1
+          done
+          cat server.log
+          exit 1
+      - name: Create sample data through the API
+        run: |
+          api() { curl -fsS -X "$1" "http://127.0.0.1:8080$2" -H 'Origin: http://localhost:8080' -H 'Content-Type: application/json' "${@:3}"; }
+          password="correct horse battery"
+          for user in alice bobby; do
+            api POST /api/v1/auth/register -d "{\"username\":\"$user\",\"password\":\"$password\"}" > /dev/null
+          done
+          api POST /api/v1/auth/login -c jar.txt -d "{\"username\":\"alice\",\"password\":\"$password\"}" > /dev/null
+          conversation=$(api POST /api/v1/conversations -b jar.txt -d '{"type":"direct","username":"bobby"}' | sed -n 's/.*"conversation":{"id":"\([^"]*\)".*/\1/p')
+          test -n "$conversation"
+          api POST "/api/v1/conversations/$conversation/messages" -b jar.txt \
+            -d "{\"client_message_id\":\"$(cat /proc/sys/kernel/random/uuid)\",\"content\":\"backup me\"}" > /dev/null
+      - name: Back up and verify the backup restores
+        run: |
+          sh deployment/backup.sh backups
+          sh deployment/verify-backup.sh backups/*.dump
+      - name: A damaged backup must be rejected
+        run: |
+          head -c 3000 backups/*.dump > backups/damaged.dump
+          if sh deployment/verify-backup.sh backups/damaged.dump; then
+            echo "::error::a damaged backup was reported as good"
+            exit 1
+          fi
