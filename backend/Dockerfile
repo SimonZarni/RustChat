@@ -1,4 +1,6 @@
-FROM rust:1.88-bookworm AS build
+# Pinned to the exact toolchain the workspace is tested with (the minimum supported version is
+# `rust-version` in Cargo.toml). Update it deliberately, together with CI.
+FROM rust:1.100.0-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY apps ./apps
