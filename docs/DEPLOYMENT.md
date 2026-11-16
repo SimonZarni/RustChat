@@ -10,6 +10,24 @@ The Compose stack builds the Rust API and web client, serves HTTPS through Caddy
 4. Start the application: `docker compose --env-file deployment/.env -f deployment/compose.yml up -d --build`.
 5. Verify `https://$RUSTCHAT_DOMAIN/healthz` and `/readyz` return `{"status":"ok"}` and register an account. Compose waits for PostgreSQL and server readiness before starting Caddy.
 
+## Configuration reference
+
+`deployment/.env` is read by Compose. Settings you can change there:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `RUSTCHAT_DOMAIN` | required | Public host name; Caddy serves HTTPS for it and `RUSTCHAT_ALLOWED_ORIGINS` is set to `https://<domain>` |
+| `RUSTCHAT_REGISTRATION` | `open` | `open` or `closed` account registration |
+| `RUSTCHAT_DB_MAX_CONNECTIONS` | `10` | PostgreSQL pool size |
+| `RUSTCHAT_GROUP_MEMBER_LIMIT` | `100` | Group conversation cap, 2–500 |
+| `RUSTCHAT_LOGIN_PER_IP_LIMIT`, `RUSTCHAT_LOGIN_PER_USERNAME_LIMIT`, `RUSTCHAT_REGISTER_PER_IP_LIMIT` | `30`, `10`, `5` | Authentication rate-limit thresholds (windows are fixed) |
+| `RUSTCHAT_ADMIN_USER_IDS` | empty | Instance administrator account UUIDs (see below) |
+| `RUSTCHAT_SERVER_IMAGE`, `RUSTCHAT_WEB_IMAGE` | local build tags | Release image tags |
+
+Set by `compose.yml` and not meant to be changed: `RUSTCHAT_BIND`, `RUSTCHAT_COOKIE_SECURE=true`, `RUSTCHAT_ALLOWED_ORIGINS`, and `RUSTCHAT_TRUSTED_PROXY_HOPS=1`. The last one makes the server take the client address from the `X-Forwarded-For` entry that Caddy appends, so authentication rate limits apply per client rather than to Caddy's address as a whole. It is safe only because port 8080 is not published; do not expose the server port directly or put another proxy in front of Caddy without adjusting it.
+
+**Password-recovery email** is optional and off by default. Set `RUSTCHAT_SMTP_HOST`, `RUSTCHAT_EMAIL_FROM` and `RUSTCHAT_PUBLIC_URL` (the HTTPS URL used in reset links) together; the server refuses to start with only some of them. `RUSTCHAT_SMTP_PORT` defaults to `465`. `RUSTCHAT_SMTP_USERNAME` and `RUSTCHAT_SMTP_PASSWORD` must be set together or not at all. Without this configuration the password-reset request endpoint returns `503 EMAIL_UNAVAILABLE`.
+
 ## Configure the first instance administrator
 
 Instance administrators are explicitly assigned by account UUID; community roles do not grant instance-wide authority. After registering the intended administrator account, sign in and call `GET /api/v1/auth/me` to obtain its `user.id`. Put that UUID in `RUSTCHAT_ADMIN_USER_IDS` in `deployment/.env` (comma-separate multiple IDs), then recreate the server with `docker compose --env-file deployment/.env -f deployment/compose.yml up -d --force-recreate server`. The administration panel and `/api/v1/admin/users` become available to those accounts after restart. Keep the ID list limited to trusted operators.

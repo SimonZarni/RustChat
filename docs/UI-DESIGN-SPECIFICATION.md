@@ -289,6 +289,9 @@ Motion should communicate state changes and improve usability.
 ## 9. Frontend Architecture
 
 ### Core Stack
+
+> **Status:** this is the target stack. The implemented frontend currently uses React, TypeScript, Vite, plain CSS and React state with `fetch`; Tailwind CSS, shadcn/ui, TanStack Query, Zustand and Zod are not yet dependencies (see [ARCHITECTURE.md](ARCHITECTURE.md)). Adopt them only when a concrete need justifies it.
+
 - React
 - TypeScript
 - Vite

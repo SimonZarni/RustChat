@@ -9,7 +9,7 @@ Messages are persisted with a transactional outbox, but clients need low-latency
 
 ## Decision
 
-- Run an in-process outbox poller that forwards committed `message.created` records to a bounded Tokio broadcast channel.
+- Run an in-process outbox poller that forwards committed outbox records (`message.created`, `message.updated`, `message.deleted`) to a bounded Tokio broadcast channel; reaction, cursor, presence, typing and community events later gained their own bounded process-local buses.
 - Authenticate WebSocket handshakes with the existing session cookie and exact configured `Origin` allow-list. Never put session tokens in URLs.
 - Require membership when a connection subscribes, cap each connection at 100 subscriptions, and periodically revalidate the session and membership.
 - Close lagged connections rather than buffering without a bound. Clients reconnect and recover from the durable history API using `after_sequence`.

@@ -23,7 +23,9 @@ The technology stack describes the intended direction. It does not imply that ev
 - Automated tests for backend, frontend and end-to-end workflows.
 - No custom cryptographic algorithms.
 
-## Planned technology stack
+## Technology stack
+
+The lists below are the intended stack. The current frontend uses React, TypeScript, Vite, plain CSS, and React state with `fetch`, and does not yet use Tailwind CSS, shadcn/ui, TanStack Query, Zustand, Zod or MSW. Valkey, Garage, LiveKit and Tauri are not implemented; see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ### Backend
 - Rust, Tokio and Axum
@@ -125,7 +127,7 @@ cargo run -p rustchat-server             # serves on 127.0.0.1:8080
 | `RUSTCHAT_REGISTRATION` | no | `open` | `open` or `closed` |
 | `RUSTCHAT_COOKIE_SECURE` | no | `true` | Set `false` only for local HTTP development |
 | `RUSTCHAT_DB_MAX_CONNECTIONS` | no | `10` | Connection pool size |
-| `RUSTCHAT_TRUSTED_PROXY_HOPS` | no | `0` | Number of reverse proxies in front of the server. `0` uses the TCP peer address for rate limiting. Set `1` behind a single proxy such as Caddy, and only if clients cannot reach the server directly |
+| `RUSTCHAT_TRUSTED_PROXY_HOPS` | no | `0` | Number of reverse proxies in front of the server. `0` uses the TCP peer address for rate limiting. Set `1` behind a single proxy such as Caddy, and only if clients cannot reach the server directly. The Compose deployment sets it to `1` |
 | `RUSTCHAT_GROUP_MEMBER_LIMIT` | no | `100` | Maximum members in a group conversation, including its creator (allowed range: 2–500) |
 | `RUSTCHAT_ADMIN_USER_IDS` | no | empty | Comma-separated UUIDs of instance administrators; community roles do not grant this authority |
 | `RUSTCHAT_LOGIN_PER_IP_LIMIT` | no | `30` | Login attempts of any outcome per network per 15 minutes |

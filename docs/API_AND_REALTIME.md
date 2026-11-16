@@ -260,24 +260,21 @@ The actual payload will depend on encryption mode and the final message schema. 
 
 ## 7. Event naming
 
-Use stable, namespaced event names. Initial candidates:
+Event types are stable, namespaced and versioned (all are version 1 today). Implemented server-to-client events:
 
-- `message.created`
-- `message.updated`
-- `message.deleted`
-- `reaction.added`
-- `reaction.removed`
-- `typing.started`
-- `typing.stopped`
-- `presence.updated`
-- `channels.updated`
-- `members.updated`
-- `conversation.read`
-- `channel.created`
-- `member.joined`
-- `member.removed`
+| Event | Scope | Payload |
+|---|---|---|
+| `message.created`, `message.updated`, `message.deleted` | subscribed conversation | message fields; carries `conversation_id` and `sequence` |
+| `reaction.added`, `reaction.removed` | subscribed conversation | `message_id`, `user_id`, `emoji`; carries `sequence` |
+| `read_cursor.updated` | subscribed conversation, other members | `user_id`, `sequence` |
+| `delivery_cursor.updated` | subscribed conversation, other members | `user_id`, `sequence` |
+| `typing.started`, `typing.stopped` | subscribed conversation, other members; ephemeral | `user_id` |
+| `presence.updated` | users sharing a conversation, subject to `presence_visible` | `user_id`, `online` |
+| `channels.updated`, `members.updated` | community members; invalidation only | `community_id` |
 
-`presence.updated`, `channels.updated`, and `members.updated` are implemented with payload schemas described in the implemented realtime section. Other listed events remain planned unless specified there.
+Control replies to client commands are not versioned events: `{"type":"subscribed"|"unsubscribed","conversation_id":"..."}`, `typing_ack` (conversation_id), `delivery_ack` (conversation_id, sequence) and `{"type":"error","conversation_id":<id or null>,"code":"..."}`. Error codes are `BAD_REQUEST` (malformed or unknown command), `NOT_FOUND` (no access to the conversation), `SUBSCRIPTION_LIMIT` (more than 100 subscriptions) and `INVALID_DELIVERY_CURSOR`.
+
+Not implemented: `conversation.read`, `channel.created`, `member.joined` and `member.removed`. Read state is delivered as `read_cursor.updated` and community changes as the two invalidation events above.
 
 ## 8. Message sending and idempotency
 

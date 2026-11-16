@@ -42,7 +42,7 @@ Important qualifications:
 | Encryption (later) | `device_keys`, `key_packages`, `encrypted_key_envelopes` |
 | Administration | `server_settings`, `audit_logs` |
 
-This is a starting inventory. Do not create every table before its feature is implemented and its requirements are understood.
+This is the original planning inventory, not the implemented schema; see **Implemented schema** below for the actual tables (for example `communities` and `community_channels` rather than `servers` and `channels`; `devices`, attachments and encryption tables do not exist). Do not create every table before its feature is implemented and its requirements are understood.
 
 ### Implemented schema
 
@@ -107,6 +107,8 @@ Messages may reference a parent message for replies. The composite foreign key b
 
 ## 5. Relationships (conceptual)
 
+This diagram is the original conceptual model and uses planned names (`SERVERS`, `CHANNELS`, `DEVICES`, `MESSAGE_ATTACHMENTS`). In the implementation, servers are `communities`, channels are `community_channels` whose messages live in a backing conversation, and devices and attachments are not yet implemented.
+
 ```mermaid
 erDiagram
     USERS ||--o{ SESSIONS : has
@@ -139,7 +141,7 @@ For a message-send operation (implemented for plain text):
 
 A retry with the same key and same request should return the original logical result. A retry with a different payload must not silently overwrite the original message.
 
-The current key is `(conversation_id, sender_id, client_message_id)`; the fingerprint is SHA-256 of the exact content bytes. A same-key, same-content retry returns the stored message without incrementing sequence or adding an outbox event. A same-key, different-content request returns a conflict.
+The current key is `(conversation_id, sender_id, client_message_id)`; the fingerprint is SHA-256 of the exact content bytes, additionally incorporating the reply target for replies. A same-key, same-content retry returns the stored message without incrementing sequence or adding an outbox event. A same-key, different-content request returns a conflict.
 
 ## 7. Transactions and outbox
 
