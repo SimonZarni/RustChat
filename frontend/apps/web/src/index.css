@@ -419,3 +419,10 @@ html[data-theme='dark'] .dialog-actions .danger-button { border-color: #c4352c; 
 .manager-section > label { display: grid; gap: 5px; color: #68747a; font-size: 11px; }
 html[data-theme='dark'] .manager-section > label { color: var(--muted); }
 .manager-row small { color: var(--muted); font-size: 10px; }
+
+/* Reaction picker, opened from the React button under a message. */
+.react-wrapper { position: relative; display: inline-flex; }
+.reaction-picker { position: absolute; z-index: 15; left: 0; bottom: calc(100% + 6px); display: flex; gap: 2px; padding: 5px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); box-shadow: 0 8px 24px rgba(20, 30, 40, .14); }
+.reaction-picker button { width: 34px; height: 34px; padding: 0; border: 0; border-radius: 50%; background: transparent; font-size: 17px; line-height: 1; cursor: pointer; }
+.reaction-picker button:hover, .reaction-picker button[aria-pressed='true'] { background: var(--accent-soft); }
+.reaction-picker button:disabled { opacity: .5; cursor: wait; }

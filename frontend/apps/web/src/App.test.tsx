@@ -299,6 +299,7 @@ describe('App', () => {
     expect(screen.getByRole('listitem')).toHaveTextContent('Rust')
     expect(screen.getByText('inline()').tagName).toBe('CODE')
     expect(screen.getByText('fn main() {}').tagName).toBe('CODE')
+    fireEvent.click(await screen.findByRole('button', { name: 'React' }))
     const addReaction = await screen.findByRole('button', { name: 'Add 👍 reaction' })
     fireEvent.click(addReaction)
     expect(await screen.findByRole('button', { name: 'Remove 👍 reaction, 1 total' })).toHaveAttribute('aria-pressed', 'true')

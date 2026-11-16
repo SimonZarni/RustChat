@@ -1,9 +1,9 @@
 import { useLayoutEffect, useRef } from 'react'
 import { initial, shortId } from '../../lib/ids'
 import { timeLabel } from '../../lib/format'
-import { REACTION_EMOJI } from '../../lib/permissions'
 import type { Message, MessageReaction, User } from '../../types'
 import { renderMessageContent } from './markdown'
+import { ReactButton, ReactionChips } from './ReactionControls'
 
 const GROUPING_WINDOW_MS = 5 * 60 * 1000
 
@@ -81,23 +81,9 @@ export function MessageList({
                   )}
                   {message.reply_to_message_id && <blockquote className="reply-quote">{quoted?.content ?? 'Original message'}</blockquote>}
                   <div className="message-body">{renderMessageContent(message, profiles)}</div>
-                  {!message.deleted_at && (
-                    <div className="message-reactions" aria-label="Reactions">
-                      {REACTION_EMOJI.map((emoji) => {
-                        const reaction = reactions[message.id]?.find((item) => item.emoji === emoji)
-                        return (
-                          <button
-                            key={emoji} type="button" className={reaction?.reacted_by_me ? 'selected' : ''}
-                            aria-pressed={reaction?.reacted_by_me ?? false}
-                            aria-label={`${reaction?.reacted_by_me ? 'Remove' : 'Add'} ${emoji} reaction${reaction ? `, ${reaction.count} total` : ''}`}
-                            disabled={pendingReactions[`${message.id}:${emoji}`]}
-                            onClick={() => onToggleReaction(message, emoji)}
-                          >{emoji}{reaction && <span>{reaction.count}</span>}</button>
-                        )
-                      })}
-                    </div>
-                  )}
+                  {!message.deleted_at && <ReactionChips message={message} reactions={reactions[message.id]} pending={pendingReactions} onToggle={onToggleReaction} />}
                   <div className="message-footer">
+                    {!message.deleted_at && <ReactButton message={message} reactions={reactions[message.id]} pending={pendingReactions} onToggle={onToggleReaction} />}
                     <button className="message-link" type="button" onClick={() => onReply(message)}>Reply</button>
                     {!message.deleted_at && own && <button className="message-link" type="button" onClick={() => onEdit(message)}>Edit</button>}
                     {!message.deleted_at && own && <button className="message-link danger" type="button" onClick={() => onDelete(message)}>Delete</button>}
