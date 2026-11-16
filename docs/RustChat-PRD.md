@@ -1114,9 +1114,10 @@ implementation.
 
 -   Initial account policy: username/password accounts, registration open by
     default and configurable as closed. Optional email supports password
-    recovery when SMTP is configured; email verification is deferred. See
+    recovery when SMTP is configured; addresses are verified by an emailed link before recovery uses them. See
     [ADR 0005](adr/0005-username-password-accounts-with-configurable-registration.md)
-    and [ADR 0010](adr/0010-optional-email-password-recovery.md).
+    [ADR 0010](adr/0010-optional-email-password-recovery.md) and
+    [ADR 0012](adr/0012-email-verification.md).
 -   Production authentication rate limits use shared PostgreSQL storage,
     while WebSocket fan-out remains single-instance. See
     [ADR 0006](adr/0006-in-process-rate-limiting-behind-a-port.md) and

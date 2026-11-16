@@ -220,6 +220,33 @@ mod tests {
         ) -> Result<(), AppError> {
             Ok(())
         }
+        async fn email_status(&self, _: UserId) -> Result<crate::ports::EmailStatus, AppError> {
+            unreachable!("not used by conversation tests")
+        }
+        async fn set_email(
+            &self,
+            _: UserId,
+            _: Option<&rustchat_domain::identity::EmailAddress>,
+        ) -> Result<(), AppError> {
+            unreachable!("not used by conversation tests")
+        }
+        async fn issue_email_verification_token(
+            &self,
+            _: UserId,
+            _: &rustchat_domain::identity::EmailAddress,
+            _: crate::ports::TokenDigest,
+            _: OffsetDateTime,
+            _: OffsetDateTime,
+        ) -> Result<bool, AppError> {
+            unreachable!("not used by conversation tests")
+        }
+        async fn verify_email_with_token(
+            &self,
+            _: crate::ports::TokenDigest,
+            _: OffsetDateTime,
+        ) -> Result<crate::ports::VerifyEmailOutcome, AppError> {
+            unreachable!("not used by conversation tests")
+        }
         async fn issue_password_reset_token(
             &self,
             _: &rustchat_domain::identity::EmailAddress,

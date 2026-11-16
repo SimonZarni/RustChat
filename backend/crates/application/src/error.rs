@@ -43,6 +43,8 @@ pub enum AppError {
     CannotModifyInstanceAdmin,
     #[error("account token is invalid or expired")]
     InvalidAccountToken,
+    #[error("email address is already verified by another account")]
+    EmailAddressInUse,
     #[error("conversation request is invalid")]
     InvalidConversationRequest,
     #[error("conversation member limit reached")]

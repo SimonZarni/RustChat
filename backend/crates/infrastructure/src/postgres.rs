@@ -9,8 +9,8 @@ use rustchat_application::{
     error::AppError,
     ports::{
         ActiveSession, AdminUser, CommunityRepository, ConversationRepository, CreateUserOutcome,
-        MessageRepository, NewSession, NewUser, SessionRepository, TokenDigest, UserCredentials,
-        UserRepository,
+        EmailStatus, MessageRepository, NewSession, NewUser, SessionRepository, TokenDigest,
+        UserCredentials, UserRepository, VerifyEmailOutcome,
     },
 };
 use rustchat_domain::{
@@ -352,7 +352,7 @@ impl UserRepository for PgUserRepository {
         if owner {
             return Err(AppError::AccountOwnsCommunities);
         }
-        let changed = sqlx::query("UPDATE users SET username = $2, email = NULL, password_hash = $3, deactivated_at = $4, deleted_at = $4 WHERE id = $1 AND deleted_at IS NULL")
+        let changed = sqlx::query("UPDATE users SET username = $2, email = NULL, email_verified_at = NULL, password_hash = $3, deactivated_at = $4, deleted_at = $4 WHERE id = $1 AND deleted_at IS NULL")
             .bind(user_id.as_uuid()).bind(tombstone_username.as_str()).bind(unusable_password_hash).bind(now)
             .execute(&mut *tx).await.map_err(db_error)?;
         if changed.rows_affected() == 0 {
@@ -395,7 +395,7 @@ impl UserRepository for PgUserRepository {
     ) -> Result<bool, AppError> {
         let mut tx = self.pool.begin().await.map_err(db_error)?;
         let user_id: Option<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM users WHERE email = $1 AND deleted_at IS NULL FOR UPDATE",
+            "SELECT id FROM users WHERE email = $1 AND email_verified_at IS NOT NULL AND deleted_at IS NULL FOR UPDATE",
         )
         .bind(email.as_str())
         .fetch_optional(&mut *tx)
@@ -406,7 +406,7 @@ impl UserRepository for PgUserRepository {
             return Ok(false);
         };
         sqlx::query(
-            "UPDATE account_tokens SET used_at = $2 WHERE user_id = $1 AND used_at IS NULL",
+            "UPDATE account_tokens SET used_at = $2 WHERE user_id = $1 AND purpose = 'password_reset' AND used_at IS NULL",
         )
         .bind(user_id)
         .bind(now)
@@ -433,7 +433,7 @@ impl UserRepository for PgUserRepository {
         now: OffsetDateTime,
     ) -> Result<bool, AppError> {
         let mut tx = self.pool.begin().await.map_err(db_error)?;
-        let row = sqlx::query("UPDATE account_tokens SET used_at = $2 WHERE token_digest = $1 AND used_at IS NULL AND expires_at > $2 RETURNING user_id")
+        let row = sqlx::query("UPDATE account_tokens SET used_at = $2 WHERE token_digest = $1 AND purpose = 'password_reset' AND used_at IS NULL AND expires_at > $2 RETURNING user_id")
             .bind(digest.0.to_vec())
             .bind(now)
             .fetch_optional(&mut *tx)
@@ -463,7 +463,7 @@ impl UserRepository for PgUserRepository {
         .await
         .map_err(db_error)?;
         sqlx::query(
-            "UPDATE account_tokens SET used_at = $2 WHERE user_id = $1 AND used_at IS NULL",
+            "UPDATE account_tokens SET used_at = $2 WHERE user_id = $1 AND purpose = 'password_reset' AND used_at IS NULL",
         )
         .bind(user_id)
         .bind(now)
@@ -472,6 +472,151 @@ impl UserRepository for PgUserRepository {
         .map_err(db_error)?;
         tx.commit().await.map_err(db_error)?;
         Ok(true)
+    }
+
+    async fn email_status(&self, user_id: UserId) -> Result<EmailStatus, AppError> {
+        let row = sqlx::query(
+            "SELECT email, email_verified_at FROM users WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(user_id.as_uuid())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_error)?
+        .ok_or(AppError::NotFound)?;
+        let address: Option<String> = row.try_get("email").map_err(db_error)?;
+        let verified_at: Option<OffsetDateTime> =
+            row.try_get("email_verified_at").map_err(db_error)?;
+        let address = address
+            .map(|value| {
+                rustchat_domain::identity::EmailAddress::parse(&value)
+                    .map_err(|_| AppError::internal("stored email address is invalid"))
+            })
+            .transpose()?;
+        Ok(EmailStatus {
+            address,
+            verified: verified_at.is_some(),
+        })
+    }
+
+    async fn set_email(
+        &self,
+        user_id: UserId,
+        email: Option<&rustchat_domain::identity::EmailAddress>,
+    ) -> Result<(), AppError> {
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        let changed = sqlx::query(
+            "UPDATE users SET email = $2, email_verified_at = NULL WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(user_id.as_uuid())
+        .bind(email.map(|email| email.as_str()))
+        .execute(&mut *tx)
+        .await
+        .map_err(db_error)?;
+        if changed.rows_affected() == 0 {
+            return Err(AppError::NotFound);
+        }
+        // Links sent for the previous address must not work for the new one.
+        sqlx::query("DELETE FROM account_tokens WHERE user_id = $1 AND used_at IS NULL")
+            .bind(user_id.as_uuid())
+            .execute(&mut *tx)
+            .await
+            .map_err(db_error)?;
+        tx.commit().await.map_err(db_error)
+    }
+
+    async fn issue_email_verification_token(
+        &self,
+        user_id: UserId,
+        email: &rustchat_domain::identity::EmailAddress,
+        digest: TokenDigest,
+        now: OffsetDateTime,
+        expires_at: OffsetDateTime,
+    ) -> Result<bool, AppError> {
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        let current: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM users WHERE id = $1 AND email = $2 AND email_verified_at IS NULL AND deleted_at IS NULL FOR UPDATE",
+        )
+        .bind(user_id.as_uuid())
+        .bind(email.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_error)?;
+        if current.is_none() {
+            tx.commit().await.map_err(db_error)?;
+            return Ok(false);
+        }
+        sqlx::query(
+            "DELETE FROM account_tokens WHERE user_id = $1 AND purpose = 'email_verification' AND used_at IS NULL",
+        )
+        .bind(user_id.as_uuid())
+        .execute(&mut *tx)
+        .await
+        .map_err(db_error)?;
+        sqlx::query(
+            "INSERT INTO account_tokens (id, user_id, token_digest, created_at, expires_at, purpose, email) \
+             VALUES ($1, $2, $3, $4, $5, 'email_verification', $6)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(user_id.as_uuid())
+        .bind(digest.0.to_vec())
+        .bind(now)
+        .bind(expires_at)
+        .bind(email.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(db_error)?;
+        tx.commit().await.map_err(db_error)?;
+        Ok(true)
+    }
+
+    async fn verify_email_with_token(
+        &self,
+        digest: TokenDigest,
+        now: OffsetDateTime,
+    ) -> Result<VerifyEmailOutcome, AppError> {
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        let token = sqlx::query(
+            "UPDATE account_tokens SET used_at = $2 \
+             WHERE token_digest = $1 AND purpose = 'email_verification' AND used_at IS NULL AND expires_at > $2 \
+             RETURNING user_id, email",
+        )
+        .bind(digest.0.to_vec())
+        .bind(now)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_error)?;
+        let Some(token) = token else {
+            tx.commit().await.map_err(db_error)?;
+            return Ok(VerifyEmailOutcome::Invalid);
+        };
+        let user_id: Uuid = token.try_get("user_id").map_err(db_error)?;
+        let email: String = token.try_get("email").map_err(db_error)?;
+        let updated = sqlx::query(
+            "UPDATE users SET email_verified_at = $3 \
+             WHERE id = $1 AND email = $2 AND email_verified_at IS NULL AND deleted_at IS NULL",
+        )
+        .bind(user_id)
+        .bind(&email)
+        .bind(now)
+        .execute(&mut *tx)
+        .await;
+        match updated {
+            Ok(result) if result.rows_affected() == 1 => {
+                tx.commit().await.map_err(db_error)?;
+                Ok(VerifyEmailOutcome::Verified)
+            }
+            // The account no longer holds this unverified address.
+            Ok(_) => {
+                tx.commit().await.map_err(db_error)?;
+                Ok(VerifyEmailOutcome::Invalid)
+            }
+            // Another account verified the address first; the token stays unused.
+            Err(sqlx::Error::Database(error)) if error.is_unique_violation() => {
+                tx.rollback().await.map_err(db_error)?;
+                Ok(VerifyEmailOutcome::AddressInUse)
+            }
+            Err(error) => Err(db_error(error)),
+        }
     }
 
     async fn list_admin_users(&self, limit: i64) -> Result<Vec<AdminUser>, AppError> {

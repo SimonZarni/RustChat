@@ -59,6 +59,22 @@ pub struct ActiveSession {
     pub via_previous_token: bool,
 }
 
+/// The recovery email address of an account and whether its owner confirmed it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmailStatus {
+    pub address: Option<EmailAddress>,
+    pub verified: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerifyEmailOutcome {
+    Verified,
+    /// Unknown, used, expired, or issued for an address the account no longer has.
+    Invalid,
+    /// Another account has already verified this address.
+    AddressInUse,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdminUser {
     pub user: User,
@@ -120,6 +136,30 @@ pub trait UserRepository: Send + Sync {
         unusable_password_hash: &str,
         now: OffsetDateTime,
     ) -> Result<(), AppError>;
+    async fn email_status(&self, user_id: UserId) -> Result<EmailStatus, AppError>;
+    /// Set or clear the address. A new address is unverified, and verification
+    /// tokens issued for the previous one are discarded.
+    async fn set_email(
+        &self,
+        user_id: UserId,
+        email: Option<&EmailAddress>,
+    ) -> Result<(), AppError>;
+    /// Store a verification token for the account's current address, replacing
+    /// earlier ones. Returns false when the account no longer has `email`.
+    async fn issue_email_verification_token(
+        &self,
+        user_id: UserId,
+        email: &EmailAddress,
+        digest: TokenDigest,
+        now: OffsetDateTime,
+        expires_at: OffsetDateTime,
+    ) -> Result<bool, AppError>;
+    /// Consume a verification token and mark its address verified.
+    async fn verify_email_with_token(
+        &self,
+        digest: TokenDigest,
+        now: OffsetDateTime,
+    ) -> Result<VerifyEmailOutcome, AppError>;
     async fn issue_password_reset_token(
         &self,
         email: &EmailAddress,

@@ -1,6 +1,6 @@
 # 0010. Optional email-based password recovery
 
-- **Status:** Accepted
+- **Status:** Partly superseded by [0012](0012-email-verification.md) (verification and address changes)
 - **Date:** 2026-11-15
 - **Supersedes:** [ADR 0005](0005-username-password-accounts-with-configurable-registration.md) for email and password recovery policy
 

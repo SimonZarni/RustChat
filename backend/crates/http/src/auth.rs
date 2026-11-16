@@ -358,6 +358,83 @@ pub async fn delete_account(
     Ok((jar.add(removal_cookie(&state)), StatusCode::NO_CONTENT))
 }
 
+#[derive(Serialize)]
+pub struct EmailDto {
+    /// The recovery address, or null when none is set.
+    email: Option<String>,
+    verified: bool,
+}
+
+impl From<rustchat_application::ports::EmailStatus> for EmailDto {
+    fn from(status: rustchat_application::ports::EmailStatus) -> Self {
+        Self {
+            email: status.address.map(|address| address.as_str().to_owned()),
+            verified: status.verified,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct EmailEnvelope {
+    email: EmailDto,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetEmail {
+    /// The new address; null or an empty string removes it.
+    email: Option<String>,
+    current_password: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VerifyEmail {
+    token: String,
+}
+
+pub async fn email_status(
+    State(state): State<AppState>,
+    AuthUser(auth): AuthUser,
+) -> Result<Json<EmailEnvelope>, ApiError> {
+    let status = state.auth.email_status(auth.user.id).await?;
+    Ok(Json(EmailEnvelope {
+        email: status.into(),
+    }))
+}
+
+pub async fn set_email(
+    State(state): State<AppState>,
+    AuthUser(auth): AuthUser,
+    ClientIp(ip): ClientIp,
+    ApiJson(body): ApiJson<SetEmail>,
+) -> Result<Json<EmailEnvelope>, ApiError> {
+    let status = state
+        .auth
+        .set_email(&auth, ip, body.current_password, body.email.as_deref())
+        .await?;
+    Ok(Json(EmailEnvelope {
+        email: status.into(),
+    }))
+}
+
+pub async fn resend_email_verification(
+    State(state): State<AppState>,
+    AuthUser(auth): AuthUser,
+) -> Result<StatusCode, ApiError> {
+    state.auth.resend_email_verification(&auth).await?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+pub async fn verify_email(
+    State(state): State<AppState>,
+    ClientIp(ip): ClientIp,
+    ApiJson(body): ApiJson<VerifyEmail>,
+) -> Result<StatusCode, ApiError> {
+    state.auth.verify_email(ip, &body.token).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub async fn change_password(
     State(state): State<AppState>,
     AuthUser(auth): AuthUser,

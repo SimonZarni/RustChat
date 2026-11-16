@@ -4,6 +4,7 @@ import { initial } from '../../lib/ids'
 import type { Theme } from '../../lib/useTheme'
 import type { User, UserProfile } from '../../types'
 import { AccountActionsSection } from './AccountActionsSection'
+import { EmailSection } from './EmailSection'
 import { InstanceAdminSection } from './InstanceAdminSection'
 import { PrivacySection } from './PrivacySection'
 import { ProfileSection } from './ProfileSection'
@@ -48,6 +49,7 @@ export function AccountFooter({ user, theme, onThemeChange, onUserChange, onSign
         </section>
       </details>
       <SecuritySection onError={onError} />
+      <EmailSection onError={onError} />
       <AccountActionsSection onError={onError} onAccountClosed={onAccountClosed} />
       <PrivacySection onError={onError} />
       <InstanceAdminSection onError={onError} />

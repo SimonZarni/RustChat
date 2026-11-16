@@ -49,3 +49,4 @@ export type InstanceUser = {
   deleted_at: string | null
 }
 export type ReadCursor = { user_id: string; sequence: number }
+export type EmailStatus = { email: string | null; verified: boolean }

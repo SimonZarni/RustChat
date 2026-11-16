@@ -25,8 +25,24 @@ struct SessionMeta {
     previous: Option<(TokenDigest, OffsetDateTime)>,
 }
 
+struct VerificationToken {
+    digest: TokenDigest,
+    user_id: UserId,
+    email: rustchat_domain::identity::EmailAddress,
+    expires_at: OffsetDateTime,
+    used: bool,
+}
+
 #[derive(Default)]
 struct Store {
+    emails: HashMap<
+        UserId,
+        (
+            rustchat_domain::identity::EmailAddress,
+            Option<OffsetDateTime>,
+        ),
+    >,
+    verification_tokens: Vec<VerificationToken>,
     users: Vec<(User, String)>,
     sessions: Vec<(Session, TokenDigest, bool)>,
     session_meta: HashMap<SessionId, SessionMeta>,
@@ -51,6 +67,9 @@ impl UserRepository for FakeStore {
             username: user.username,
             created_at: user.created_at,
         };
+        if let Some(email) = user.email {
+            store.emails.insert(record.id, (email, None));
+        }
         store.users.push((record, user.password_hash));
         Ok(CreateUserOutcome::Created)
     }
@@ -247,6 +266,97 @@ impl UserRepository for FakeStore {
             }
         }
         Ok(())
+    }
+
+    async fn email_status(&self, user_id: UserId) -> Result<EmailStatus, AppError> {
+        let store = self.0.lock().unwrap();
+        Ok(match store.emails.get(&user_id) {
+            Some((address, verified_at)) => EmailStatus {
+                address: Some(address.clone()),
+                verified: verified_at.is_some(),
+            },
+            None => EmailStatus {
+                address: None,
+                verified: false,
+            },
+        })
+    }
+
+    async fn set_email(
+        &self,
+        user_id: UserId,
+        email: Option<&rustchat_domain::identity::EmailAddress>,
+    ) -> Result<(), AppError> {
+        let mut store = self.0.lock().unwrap();
+        match email {
+            Some(email) => {
+                store.emails.insert(user_id, (email.clone(), None));
+            }
+            None => {
+                store.emails.remove(&user_id);
+            }
+        }
+        store.verification_tokens.retain(|t| t.user_id != user_id);
+        Ok(())
+    }
+
+    async fn issue_email_verification_token(
+        &self,
+        user_id: UserId,
+        email: &rustchat_domain::identity::EmailAddress,
+        digest: TokenDigest,
+        _now: OffsetDateTime,
+        expires_at: OffsetDateTime,
+    ) -> Result<bool, AppError> {
+        let mut store = self.0.lock().unwrap();
+        match store.emails.get(&user_id) {
+            Some((current, None)) if current == email => {}
+            _ => return Ok(false),
+        }
+        store
+            .verification_tokens
+            .retain(|t| t.user_id != user_id || t.used);
+        store.verification_tokens.push(VerificationToken {
+            digest,
+            user_id,
+            email: email.clone(),
+            expires_at,
+            used: false,
+        });
+        Ok(true)
+    }
+
+    async fn verify_email_with_token(
+        &self,
+        digest: TokenDigest,
+        now: OffsetDateTime,
+    ) -> Result<VerifyEmailOutcome, AppError> {
+        let mut store = self.0.lock().unwrap();
+        let Some(index) = store
+            .verification_tokens
+            .iter()
+            .position(|t| t.digest == digest && !t.used && t.expires_at > now)
+        else {
+            return Ok(VerifyEmailOutcome::Invalid);
+        };
+        let (user_id, email) = {
+            let token = &store.verification_tokens[index];
+            (token.user_id, token.email.clone())
+        };
+        let taken = store.emails.iter().any(|(id, (address, verified))| {
+            *id != user_id && *address == email && verified.is_some()
+        });
+        if taken {
+            return Ok(VerifyEmailOutcome::AddressInUse);
+        }
+        store.verification_tokens[index].used = true;
+        match store.emails.get_mut(&user_id) {
+            Some((current, verified @ None)) if *current == email => {
+                *verified = Some(now);
+                Ok(VerifyEmailOutcome::Verified)
+            }
+            _ => Ok(VerifyEmailOutcome::Invalid),
+        }
     }
 
     async fn issue_password_reset_token(
@@ -599,7 +709,49 @@ pub fn generous_limits() -> RateLimitConfig {
     }
 }
 
+/// Records every email the service sends.
+#[derive(Default)]
+pub struct FakeEmail(Mutex<Vec<(String, String, String)>>);
+
+impl FakeEmail {
+    /// `(recipient, subject, body)` of every message sent so far.
+    pub fn sent(&self) -> Vec<(String, String, String)> {
+        self.0.lock().unwrap().clone()
+    }
+
+    /// The token in the most recent link sent to `recipient`.
+    pub fn last_token_for(&self, recipient: &str) -> Option<String> {
+        let sent = self.0.lock().unwrap();
+        let (_, _, body) = sent.iter().rev().find(|(to, _, _)| to == recipient)?;
+        Some(
+            body.split("token=")
+                .nth(1)?
+                .split_whitespace()
+                .next()?
+                .to_owned(),
+        )
+    }
+}
+
+#[async_trait]
+impl EmailDelivery for FakeEmail {
+    async fn send(
+        &self,
+        recipient: &rustchat_domain::identity::EmailAddress,
+        subject: &str,
+        text: &str,
+    ) -> Result<(), AppError> {
+        self.0.lock().unwrap().push((
+            recipient.as_str().to_owned(),
+            subject.to_owned(),
+            text.to_owned(),
+        ));
+        Ok(())
+    }
+}
+
 pub struct Harness {
+    pub emails: Arc<FakeEmail>,
     pub auth: AuthService,
     pub hasher: Arc<FakeHasher>,
     pub clock: Arc<FakeClock>,
@@ -616,6 +768,7 @@ impl Harness {
         let hasher = Arc::new(FakeHasher::default());
         let clock = Arc::new(FakeClock(Mutex::new(OffsetDateTime::UNIX_EPOCH)));
         let ttl = Duration::days(30);
+        let emails = Arc::new(FakeEmail::default());
         let auth = AuthService::new(
             Arc::new(store.clone()),
             Arc::new(store),
@@ -628,8 +781,10 @@ impl Harness {
                 session_ttl: ttl,
                 rate_limits,
             },
-        );
+        )
+        .with_email_delivery(emails.clone(), "https://chat.example.test".to_owned());
         Self {
+            emails,
             auth,
             hasher,
             clock,

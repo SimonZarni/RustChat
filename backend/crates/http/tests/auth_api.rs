@@ -583,6 +583,26 @@ async fn password_reset_is_single_use_and_revokes_existing_sessions(pool: PgPool
     assert_eq!(registered.status, StatusCode::CREATED);
     let session = login_cookie(&app, "recoverable").await;
 
+    // Recovery only goes to a verified address: until the registration link is followed,
+    // a reset request sends nothing.
+    let verification_token = latest_email_token(&delivery).await;
+    let sent_before = delivery.0.lock().await.len();
+    let unverified_request = post_json(
+        &app,
+        "/api/v1/auth/password-reset/request",
+        json!({"email":"recoverable@example.test"}),
+    )
+    .await;
+    assert_eq!(unverified_request.status, StatusCode::ACCEPTED);
+    assert_eq!(delivery.0.lock().await.len(), sent_before);
+    let verified = post_json(
+        &app,
+        "/api/v1/auth/email/verify",
+        json!({"token": verification_token}),
+    )
+    .await;
+    assert_eq!(verified.status, StatusCode::NO_CONTENT);
+
     let before_unknown_request = delivery.0.lock().await.len();
     let unknown_email = post_json(
         &app,

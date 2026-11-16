@@ -11,12 +11,17 @@ use time::{Duration, OffsetDateTime};
 use crate::{
     error::AppError,
     ports::{
-        Clock, CreateUserOutcome, EmailDelivery, NewSession, NewUser, PasswordHasher,
+        Clock, CreateUserOutcome, EmailDelivery, EmailStatus, NewSession, NewUser, PasswordHasher,
         RateLimitDecision, RateLimitRule, RateLimiter, SessionRepository, TokenService,
-        UserRepository,
+        UserRepository, VerifyEmailOutcome,
     },
     ratelimit::{RateLimitConfig, login_ip_key, login_user_key, register_ip_key},
 };
+
+/// How long an emailed verification link works.
+const EMAIL_VERIFICATION_TTL: Duration = Duration::hours(24);
+/// Verification emails a user may request per hour.
+const EMAIL_VERIFICATION_SENDS_PER_HOUR: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegistrationPolicy {
@@ -260,6 +265,107 @@ impl AuthService {
         Ok(())
     }
 
+    /// The caller's recovery address and whether it is verified.
+    pub async fn email_status(&self, user_id: UserId) -> Result<EmailStatus, AppError> {
+        self.users.email_status(user_id).await
+    }
+
+    /// Set or clear the recovery address after re-checking the password. A new
+    /// address starts unverified; a verification link is sent when email
+    /// delivery is configured.
+    pub async fn set_email(
+        &self,
+        auth: &AuthContext,
+        client_ip: IpAddr,
+        current_password: String,
+        email: Option<&str>,
+    ) -> Result<EmailStatus, AppError> {
+        let email = email
+            .filter(|value| !value.trim().is_empty())
+            .map(EmailAddress::parse)
+            .transpose()?;
+        self.verify_current_password(auth, client_ip, current_password)
+            .await?;
+        self.users.set_email(auth.user.id, email.as_ref()).await?;
+        if let (Some(email), true) = (email, self.email_delivery.is_some())
+            && let Err(error) = self.send_email_verification(auth.user.id, &email).await
+        {
+            tracing::warn!(%error, "verification email could not be sent");
+        }
+        self.users.email_status(auth.user.id).await
+    }
+
+    /// Send a fresh verification link to the caller's unverified address.
+    /// Does nothing when there is no address or it is already verified.
+    pub async fn resend_email_verification(&self, auth: &AuthContext) -> Result<(), AppError> {
+        self.email_delivery()?;
+        let now = self.clock.now();
+        let rule = RateLimitRule {
+            max: EMAIL_VERIFICATION_SENDS_PER_HOUR,
+            window: Duration::hours(1),
+        };
+        let key = format!("email-verify:user:{}", auth.user.id.as_uuid());
+        self.enforce(&key, rule, now).await?;
+        self.limiter.record(&key, rule, now).await?;
+        let status = self.users.email_status(auth.user.id).await?;
+        match status.address {
+            Some(address) if !status.verified => {
+                self.send_email_verification(auth.user.id, &address).await
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Confirm an address from the emailed link. The link is single-use and
+    /// works from any browser, so it does not require a session.
+    pub async fn verify_email(&self, client_ip: IpAddr, raw_token: &str) -> Result<(), AppError> {
+        if raw_token.len() > 128 || raw_token.is_empty() {
+            return Err(AppError::InvalidAccountToken);
+        }
+        let now = self.clock.now();
+        let rule = self.config.rate_limits.login_per_ip;
+        let key = login_ip_key(client_ip).replace("login:", "verify:");
+        self.enforce(&key, rule, now).await?;
+        self.limiter.record(&key, rule, now).await?;
+        let digest = self.tokens.digest(raw_token);
+        match self.users.verify_email_with_token(digest, now).await? {
+            VerifyEmailOutcome::Verified => Ok(()),
+            VerifyEmailOutcome::Invalid => Err(AppError::InvalidAccountToken),
+            VerifyEmailOutcome::AddressInUse => Err(AppError::EmailAddressInUse),
+        }
+    }
+
+    async fn send_email_verification(
+        &self,
+        user_id: UserId,
+        email: &EmailAddress,
+    ) -> Result<(), AppError> {
+        let (delivery, public_url) = self.email_delivery()?;
+        let now = self.clock.now();
+        let token = self.tokens.generate();
+        if !self
+            .users
+            .issue_email_verification_token(
+                user_id,
+                email,
+                token.digest,
+                now,
+                now + EMAIL_VERIFICATION_TTL,
+            )
+            .await?
+        {
+            return Ok(());
+        }
+        let link = format!("{public_url}/verify-email?token={}", token.raw);
+        delivery
+            .send(
+                email,
+                "Confirm your RustChat email address",
+                &format!("Confirm this address for your RustChat account by opening this link:\n\n{link}\n\nThis link expires in 24 hours. If you did not expect this message, you can ignore it."),
+            )
+            .await
+    }
+
     pub async fn complete_password_reset(
         &self,
         raw_token: &str,
@@ -344,13 +450,22 @@ impl AuthService {
             .create(NewUser {
                 id: user.id,
                 username: user.username.clone(),
-                email,
+                email: email.clone(),
                 password_hash,
                 created_at: user.created_at,
             })
             .await?;
         match outcome {
-            CreateUserOutcome::Created => Ok(user),
+            CreateUserOutcome::Created => {
+                // Best effort: the account exists either way, and the owner can
+                // ask for another email from their settings.
+                if let (Some(email), true) = (email, self.email_delivery.is_some())
+                    && let Err(error) = self.send_email_verification(user.id, &email).await
+                {
+                    tracing::warn!(%error, "verification email could not be sent at registration");
+                }
+                Ok(user)
+            }
             CreateUserOutcome::UsernameTaken => Err(AppError::UsernameTaken),
             CreateUserOutcome::EmailTaken => Err(AppError::EmailTaken),
         }
@@ -869,6 +984,105 @@ mod tests {
         // The request path still sees the rotation as due, because the passive call did nothing.
         let request = h.auth.authenticate_request(&login.token).await.unwrap();
         assert!(request.rotated_token.is_some());
+    }
+
+    async fn registered_with_email(h: &Harness, email: &str) -> AuthContext {
+        h.auth
+            .register_with_email(IP, "alice", Some(email), PASSWORD.into())
+            .await
+            .unwrap();
+        let login = h.auth.login(IP, "alice", PASSWORD.into()).await.unwrap();
+        h.auth.authenticate(&login.token).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn registration_with_an_email_sends_a_verification_link_that_works_once() {
+        let h = Harness::new(RegistrationPolicy::Open);
+        let auth = registered_with_email(&h, "Alice@Example.test").await;
+
+        let status = h.auth.email_status(auth.user.id).await.unwrap();
+        assert_eq!(status.address.unwrap().as_str(), "alice@example.test");
+        assert!(!status.verified);
+        let token = h.emails.last_token_for("alice@example.test").unwrap();
+
+        h.auth.verify_email(IP, &token).await.unwrap();
+        assert!(h.auth.email_status(auth.user.id).await.unwrap().verified);
+        assert!(matches!(
+            h.auth.verify_email(IP, &token).await,
+            Err(AppError::InvalidAccountToken)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_verification_link_expires_after_a_day() {
+        let h = Harness::new(RegistrationPolicy::Open);
+        let auth = registered_with_email(&h, "alice@example.test").await;
+        let token = h.emails.last_token_for("alice@example.test").unwrap();
+
+        h.clock.advance(Duration::hours(24));
+        assert!(matches!(
+            h.auth.verify_email(IP, &token).await,
+            Err(AppError::InvalidAccountToken)
+        ));
+        assert!(!h.auth.email_status(auth.user.id).await.unwrap().verified);
+    }
+
+    #[tokio::test]
+    async fn changing_the_email_needs_the_password_and_resets_verification() {
+        let h = Harness::new(RegistrationPolicy::Open);
+        let auth = registered_with_email(&h, "old@example.test").await;
+        let old = h.emails.last_token_for("old@example.test").unwrap();
+        h.auth.verify_email(IP, &old).await.unwrap();
+
+        assert!(matches!(
+            h.auth
+                .set_email(
+                    &auth,
+                    IP,
+                    "wrong password!!".into(),
+                    Some("new@example.test")
+                )
+                .await,
+            Err(AppError::InvalidCredentials)
+        ));
+        assert!(h.auth.email_status(auth.user.id).await.unwrap().verified);
+
+        let status = h
+            .auth
+            .set_email(&auth, IP, PASSWORD.into(), Some("new@example.test"))
+            .await
+            .unwrap();
+        assert_eq!(status.address.unwrap().as_str(), "new@example.test");
+        assert!(!status.verified);
+        assert!(h.emails.last_token_for("new@example.test").is_some());
+    }
+
+    #[tokio::test]
+    async fn resend_is_limited_to_three_emails_per_hour() {
+        let h = Harness::new(RegistrationPolicy::Open);
+        let auth = registered_with_email(&h, "alice@example.test").await;
+        let sent_at_registration = h.emails.sent().len();
+
+        for _ in 0..3 {
+            h.auth.resend_email_verification(&auth).await.unwrap();
+        }
+        assert_eq!(h.emails.sent().len(), sent_at_registration + 3);
+        assert!(matches!(
+            h.auth.resend_email_verification(&auth).await,
+            Err(AppError::RateLimited { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn resend_sends_nothing_once_the_address_is_verified() {
+        let h = Harness::new(RegistrationPolicy::Open);
+        let auth = registered_with_email(&h, "alice@example.test").await;
+        let token = h.emails.last_token_for("alice@example.test").unwrap();
+        h.auth.verify_email(IP, &token).await.unwrap();
+
+        let before = h.emails.sent().len();
+        h.auth.resend_email_verification(&auth).await.unwrap();
+        assert_eq!(h.emails.sent().len(), before);
     }
 
     #[tokio::test]

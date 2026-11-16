@@ -158,6 +158,11 @@ impl IntoResponse for ApiError {
                     "CANNOT_MODIFY_INSTANCE_ADMIN",
                     "Configured instance administrator accounts cannot be modified here.",
                 ),
+                AppError::EmailAddressInUse => body(
+                    StatusCode::CONFLICT,
+                    "EMAIL_ADDRESS_IN_USE",
+                    "Another account has already verified this email address.",
+                ),
                 AppError::InvalidAccountToken => body(
                     StatusCode::BAD_REQUEST,
                     "INVALID_ACCOUNT_TOKEN",

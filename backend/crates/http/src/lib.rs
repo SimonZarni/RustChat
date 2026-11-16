@@ -318,6 +318,9 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/logout", post(auth::logout))
         .route("/auth/me", get(auth::me))
         .route("/auth/password", post(auth::change_password))
+        .route("/auth/email", get(auth::email_status).put(auth::set_email))
+        .route("/auth/email/resend", post(auth::resend_email_verification))
+        .route("/auth/email/verify", post(auth::verify_email))
         .route(
             "/auth/password-reset/request",
             post(auth::request_password_reset),

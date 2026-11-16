@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AccountFooter } from './features/account/AccountFooter'
 import { AuthScreen } from './features/auth/AuthScreen'
+import { VerifyEmailScreen } from './features/auth/VerifyEmailScreen'
 import { CommunitySection } from './features/communities/CommunitySection'
 import { useCommunities } from './features/communities/useCommunities'
 import { ConversationList } from './features/conversations/ConversationList'
@@ -10,6 +11,7 @@ import { useConversation } from './features/messages/useConversation'
 import { useRealtime } from './features/realtime/useRealtime'
 import { api, errorMessage } from './lib/api'
 import { conversationShortcut, displayName } from './lib/format'
+import { readVerifyEmailToken } from './lib/links'
 import { useTheme } from './lib/useTheme'
 import type { Conversation, User } from './types'
 
@@ -20,6 +22,7 @@ export default function App() {
   const [checkingSession, setCheckingSession] = useState(true)
   const [signedOutNotice, setSignedOutNotice] = useState('')
   const [error, setError] = useState('')
+  const [verifyEmailToken, setVerifyEmailToken] = useState(readVerifyEmailToken)
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [showNewConversation, setShowNewConversation] = useState(false)
@@ -81,6 +84,9 @@ export default function App() {
     endSession('')
   }
 
+  if (verifyEmailToken !== null) {
+    return <VerifyEmailScreen token={verifyEmailToken} onContinue={() => { window.history.replaceState({}, '', '/'); setVerifyEmailToken(null) }} />
+  }
   if (checkingSession) return <main className="loading-screen"><span className="brand-mark">R</span><p>Opening RustChat…</p></main>
   if (!user) return <AuthScreen onAuthenticated={setUser} initialNotice={signedOutNotice} />
 

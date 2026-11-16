@@ -79,4 +79,4 @@ Updated through community roles, message editing/deletion/replies/mentions/react
 
 - Desktop client authentication: the cookie model assumes the Tauri webview can hold the cookie; confirm when the desktop app is built.
 - Authentication rate-limit thresholds are configurable, but their windows are fixed. The production limiter uses PostgreSQL and fails closed when the database is unavailable. WebSocket event fan-out and presence remain process-local; multi-instance deployments need shared realtime coordination.
-- Email verification remains deferred. Password reset uses the account recovery email and requires SMTP configuration.
+- Password reset uses the verified account recovery email and requires SMTP configuration. Operators must tell users who registered an address before verification existed to confirm it in their settings.

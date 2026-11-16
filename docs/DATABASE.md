@@ -56,7 +56,8 @@ The implemented tables are described below (`backend/migrations/0001_identity.sq
 | `username` | `text` NOT NULL | Stored normalized (lower-case); `UNIQUE` (`users_username_key`), so uniqueness is case-insensitive. `CHECK` enforces `^[a-z0-9_]{3,32}$` |
 | `password_hash` | `text` NOT NULL | Argon2id PHC string; never plaintext |
 | `created_at` | `timestamptz` NOT NULL | UTC |
-| `email` | `text` NULL | Optional normalized recovery address; unique when present. Email verification remains deferred |
+| `email` | `text` NULL | Optional normalized recovery address |
+| `email_verified_at` | `timestamptz` NULL | When the owner confirmed the address through an emailed link; only a verified address receives recovery mail and is unique (`users_verified_email_key`, a partial unique index), so an unverified address can neither block nor reveal anyone else's. `CHECK` requires an address whenever set (migration `0022_email_verification.sql`) |
 | `deactivated_at` | `timestamptz` NULL | Account is inactive and sessions are revoked; a successful password login clears this timestamp |
 | `suspended_at` | `timestamptz` NULL | Instance-admin suspension; blocks login and active-session use until restored |
 | `deleted_at` | `timestamptz` NULL | Permanent tombstone; credentials and profile are scrubbed, memberships removed, and message history retained |
@@ -80,7 +81,7 @@ Indexes: the unique `token_digest` index serves per-request authentication; a pa
 
 Account deletion is a logical tombstone. User identity fields are replaced, profile fields are scrubbed, active sessions and conversation/community memberships are removed, and message rows remain attached to the stable user ID so conversation history stays intact for remaining members. Community ownership must be transferred first. Backups made before deletion can retain the pre-deletion data until their configured retention period expires; deletion from backup archives is not immediate.
 
-`account_tokens` stores SHA-256 digests of single-use password reset tokens, with creation, expiry, and consumption timestamps. Raw reset tokens are sent only through the configured email delivery service and are never stored. A successful reset and revocation of the account's sessions happen in one transaction.
+`account_tokens` stores SHA-256 digests of single-use tokens with a `purpose` (`password_reset` or `email_verification`), creation, expiry, and consumption timestamps; an `email_verification` token also records the address it verifies, so changing the address invalidates it. Raw reset tokens are sent only through the configured email delivery service and are never stored. A successful reset and revocation of the account's sessions happen in one transaction.
 
 `rate_limit_entries` stores SHA-256 digests of authentication limiter keys, fixed-window counts and expiration timestamps. The PostgreSQL adapter shares counters across processes using the same database and deletes expired rows as it records new attempts. It does not retain raw usernames or client network addresses.
 

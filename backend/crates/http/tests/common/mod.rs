@@ -36,7 +36,47 @@ pub const ORIGIN: &str = "https://chat.example.test";
 pub const PASSWORD: &str = "correct horse battery";
 pub const PEER: &str = "203.0.113.10:5000";
 
+/// Records every email the server sends.
+#[derive(Clone, Default)]
+pub struct CapturedEmail(pub Arc<tokio::sync::Mutex<Vec<(String, String)>>>);
+
+#[async_trait::async_trait]
+impl rustchat_application::ports::EmailDelivery for CapturedEmail {
+    async fn send(
+        &self,
+        recipient: &rustchat_domain::identity::EmailAddress,
+        _subject: &str,
+        text: &str,
+    ) -> Result<(), rustchat_application::error::AppError> {
+        self.0
+            .lock()
+            .await
+            .push((recipient.as_str().to_owned(), text.to_owned()));
+        Ok(())
+    }
+}
+
+impl CapturedEmail {
+    pub async fn count(&self) -> usize {
+        self.0.lock().await.len()
+    }
+
+    /// The token in the newest link sent to `recipient`.
+    pub async fn last_token_for(&self, recipient: &str) -> Option<String> {
+        let sent = self.0.lock().await;
+        let (_, body) = sent.iter().rev().find(|(to, _)| to == recipient)?;
+        Some(
+            body.split("token=")
+                .nth(1)?
+                .split_whitespace()
+                .next()?
+                .to_owned(),
+        )
+    }
+}
+
 pub struct Options {
+    pub email: Option<CapturedEmail>,
     /// Enforce general API budgets with these limits when set.
     pub api_limits: Option<ApiRateLimitConfig>,
     pub lifecycle: SessionLifecycle,
@@ -51,6 +91,7 @@ impl Default for Options {
             window: time::Duration::hours(1),
         };
         Self {
+            email: None,
             api_limits: None,
             lifecycle: SessionLifecycle::default(),
             rate_limits: RateLimitConfig {
@@ -80,6 +121,10 @@ pub fn app(pool: PgPool, options: Options) -> Router {
         },
     )
     .with_session_lifecycle(options.lifecycle);
+    let auth = match options.email {
+        Some(email) => auth.with_email_delivery(Arc::new(email), ORIGIN.to_owned()),
+        None => auth,
+    };
     let conversations = ConversationService::new(
         Arc::new(PgUserRepository::new(pool.clone())),
         Arc::new(PgConversationRepository::new(pool.clone())),
