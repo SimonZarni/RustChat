@@ -31,6 +31,32 @@ pub struct AuthConfig {
     pub rate_limits: RateLimitConfig,
 }
 
+/// Idle timeout and token rotation policy for sessions.
+///
+/// The absolute lifetime is `AuthConfig::session_ttl`. A session also ends
+/// after `idle_timeout` without activity, and its cookie token is replaced
+/// every `rotation_interval`; the previous token keeps working for
+/// `rotation_grace` so parallel in-flight requests are not signed out.
+#[derive(Debug, Clone, Copy)]
+pub struct SessionLifecycle {
+    pub idle_timeout: Duration,
+    pub rotation_interval: Duration,
+    pub rotation_grace: Duration,
+    /// Activity is written at most this often, to avoid a write per request.
+    pub touch_interval: Duration,
+}
+
+impl Default for SessionLifecycle {
+    fn default() -> Self {
+        Self {
+            idle_timeout: Duration::days(7),
+            rotation_interval: Duration::hours(24),
+            rotation_grace: Duration::seconds(60),
+            touch_interval: Duration::minutes(5),
+        }
+    }
+}
+
 /// The authenticated principal for a request.
 #[derive(Debug, Clone)]
 pub struct AuthContext {
@@ -55,6 +81,25 @@ impl std::fmt::Debug for LoginResult {
     }
 }
 
+/// A request's principal, plus a replacement cookie token when this request
+/// rotated the session token. The token is secret and redacted from `Debug`.
+pub struct AuthenticatedRequest {
+    pub context: AuthContext,
+    pub rotated_token: Option<String>,
+}
+
+impl std::fmt::Debug for AuthenticatedRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthenticatedRequest")
+            .field("context", &self.context)
+            .field(
+                "rotated_token",
+                &self.rotated_token.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
+}
+
 pub struct SessionInfo {
     pub session: Session,
     pub is_current: bool,
@@ -70,6 +115,7 @@ pub struct AuthService {
     instance_admin_ids: HashSet<UserId>,
     email_delivery: Option<Arc<dyn EmailDelivery>>,
     public_url: Option<String>,
+    lifecycle: SessionLifecycle,
     config: AuthConfig,
 }
 
@@ -93,8 +139,14 @@ impl AuthService {
             instance_admin_ids: HashSet::new(),
             email_delivery: None,
             public_url: None,
+            lifecycle: SessionLifecycle::default(),
             config,
         }
+    }
+
+    pub fn with_session_lifecycle(mut self, lifecycle: SessionLifecycle) -> Self {
+        self.lifecycle = lifecycle;
+        self
     }
 
     pub fn with_instance_admins(mut self, admin_ids: impl IntoIterator<Item = UserId>) -> Self {
@@ -434,15 +486,66 @@ impl AuthService {
         })
     }
 
-    /// Resolve a session token to its principal, or `Unauthenticated`.
+    /// Resolve a session token to its principal, or `Unauthenticated`, without
+    /// recording activity or rotating the token. Long-lived connections use
+    /// this to re-check that the session is still valid.
     pub async fn authenticate(&self, raw_token: &str) -> Result<AuthContext, AppError> {
         let digest = self.tokens.digest(raw_token);
         let now = self.clock.now();
-        match self.sessions.find_active(&digest, now).await? {
-            Some(active) if !active.session.is_expired_at(now) => Ok(AuthContext {
-                user: active.user,
-                session_id: active.session.id,
-            }),
+        Ok(self.find_live_session(&digest, now).await?.0)
+    }
+
+    /// Resolve a session token for an HTTP request: enforces the idle timeout,
+    /// records activity and rotates the token when it is due.
+    pub async fn authenticate_request(
+        &self,
+        raw_token: &str,
+    ) -> Result<AuthenticatedRequest, AppError> {
+        let digest = self.tokens.digest(raw_token);
+        let now = self.clock.now();
+        let (context, active) = self.find_live_session(&digest, now).await?;
+        let life = self.lifecycle;
+        let mut rotated_token = None;
+        if !active.via_previous_token && now - active.token_rotated_at >= life.rotation_interval {
+            let token = self.tokens.generate();
+            if self
+                .sessions
+                .rotate_token(
+                    context.session_id,
+                    &digest,
+                    &token.digest,
+                    now,
+                    now + life.rotation_grace,
+                )
+                .await?
+            {
+                rotated_token = Some(token.raw);
+            }
+        } else if now - active.last_seen_at >= life.touch_interval {
+            self.sessions.touch(context.session_id, now).await?;
+        }
+        Ok(AuthenticatedRequest {
+            context,
+            rotated_token,
+        })
+    }
+
+    async fn find_live_session(
+        &self,
+        digest: &crate::ports::TokenDigest,
+        now: OffsetDateTime,
+    ) -> Result<(AuthContext, crate::ports::ActiveSession), AppError> {
+        match self.sessions.find_active(digest, now).await? {
+            Some(active)
+                if !active.session.is_expired_at(now)
+                    && now - active.last_seen_at < self.lifecycle.idle_timeout =>
+            {
+                let context = AuthContext {
+                    user: active.user.clone(),
+                    session_id: active.session.id,
+                };
+                Ok((context, active))
+            }
             _ => Err(AppError::Unauthenticated),
         }
     }
@@ -676,6 +779,98 @@ mod tests {
         }
     }
 
+    async fn logged_in(h: &Harness) -> LoginResult {
+        h.auth.register(IP, "alice", PASSWORD.into()).await.unwrap();
+        h.auth.login(IP, "alice", PASSWORD.into()).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn session_ends_after_the_idle_timeout() {
+        let h = Harness::new(RegistrationPolicy::Open);
+        let idle = SessionLifecycle::default().idle_timeout;
+        let login = logged_in(&h).await;
+
+        h.clock.advance(idle - Duration::seconds(1));
+        assert!(h.auth.authenticate(&login.token).await.is_ok());
+        h.clock.advance(Duration::seconds(1));
+        assert!(matches!(
+            h.auth.authenticate(&login.token).await,
+            Err(AppError::Unauthenticated)
+        ));
+        assert!(matches!(
+            h.auth.authenticate_request(&login.token).await,
+            Err(AppError::Unauthenticated)
+        ));
+    }
+
+    #[tokio::test]
+    async fn requests_record_activity_so_an_active_session_is_not_idle() {
+        let h = Harness::new(RegistrationPolicy::Open).with_lifecycle(SessionLifecycle {
+            // Rotation is exercised separately; keep this token stable.
+            rotation_interval: Duration::days(365),
+            ..SessionLifecycle::default()
+        });
+        let idle = SessionLifecycle::default().idle_timeout;
+        let login = logged_in(&h).await;
+
+        for _ in 0..3 {
+            h.clock.advance(idle - Duration::hours(1));
+            h.auth.authenticate_request(&login.token).await.unwrap();
+        }
+        // Three idle-timeout-sized gaps have passed, but each one was bridged by a request.
+        assert!(h.auth.authenticate(&login.token).await.is_ok());
+        // Without further activity the session still ends.
+        h.clock.advance(idle);
+        assert!(h.auth.authenticate(&login.token).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn token_rotates_when_due_and_the_old_one_works_only_briefly() {
+        let h = Harness::new(RegistrationPolicy::Open);
+        let life = SessionLifecycle::default();
+        let login = logged_in(&h).await;
+
+        // Not due yet: no replacement token.
+        h.clock
+            .advance(life.rotation_interval - Duration::seconds(1));
+        let early = h.auth.authenticate_request(&login.token).await.unwrap();
+        assert!(early.rotated_token.is_none());
+
+        h.clock.advance(Duration::seconds(1));
+        let rotated = h.auth.authenticate_request(&login.token).await.unwrap();
+        let new_token = rotated.rotated_token.expect("token due for rotation");
+        assert_ne!(new_token, login.token);
+        assert_eq!(rotated.context.session_id, login.session.id);
+
+        // The replacement works and is not rotated again immediately.
+        let again = h.auth.authenticate_request(&new_token).await.unwrap();
+        assert!(again.rotated_token.is_none());
+        assert_eq!(again.context.session_id, login.session.id);
+
+        // The previous token survives only for the grace period, and never rotates again.
+        h.clock.advance(life.rotation_grace - Duration::seconds(1));
+        let in_flight = h.auth.authenticate_request(&login.token).await.unwrap();
+        assert!(in_flight.rotated_token.is_none());
+        h.clock.advance(Duration::seconds(1));
+        assert!(matches!(
+            h.auth.authenticate(&login.token).await,
+            Err(AppError::Unauthenticated)
+        ));
+        assert!(h.auth.authenticate(&new_token).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn passive_authentication_neither_rotates_nor_records_activity() {
+        let h = Harness::new(RegistrationPolicy::Open);
+        let life = SessionLifecycle::default();
+        let login = logged_in(&h).await;
+        h.clock.advance(life.rotation_interval + Duration::hours(1));
+        h.auth.authenticate(&login.token).await.unwrap();
+        // The request path still sees the rotation as due, because the passive call did nothing.
+        let request = h.auth.authenticate_request(&login.token).await.unwrap();
+        assert!(request.rotated_token.is_some());
+    }
+
     #[tokio::test]
     async fn register_then_login_then_authenticate() {
         let h = Harness::new(RegistrationPolicy::Open);
@@ -774,7 +969,11 @@ mod tests {
 
     #[tokio::test]
     async fn session_expires_after_ttl() {
-        let h = Harness::new(RegistrationPolicy::Open);
+        // This test is about the absolute lifetime, so keep the idle timeout out of the way.
+        let h = Harness::new(RegistrationPolicy::Open).with_lifecycle(SessionLifecycle {
+            idle_timeout: Duration::days(365),
+            ..SessionLifecycle::default()
+        });
         h.auth.register(IP, "alice", PASSWORD.into()).await.unwrap();
         let login = h.auth.login(IP, "alice", PASSWORD.into()).await.unwrap();
         h.clock.advance(h.ttl - Duration::seconds(1));

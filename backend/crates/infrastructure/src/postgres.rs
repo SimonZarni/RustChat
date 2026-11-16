@@ -561,8 +561,8 @@ impl SessionRepository for PgSessionRepository {
     async fn insert(&self, new: NewSession) -> Result<(), AppError> {
         let result = sqlx::query(
             "WITH active_user AS (UPDATE users SET deactivated_at = NULL WHERE id = $2 AND deleted_at IS NULL AND suspended_at IS NULL RETURNING id) \
-             INSERT INTO sessions (id, user_id, token_digest, created_at, expires_at) \
-             SELECT $1, id, $3, $4, $5 FROM active_user",
+             INSERT INTO sessions (id, user_id, token_digest, created_at, expires_at, last_seen_at, token_rotated_at) \
+             SELECT $1, id, $3, $4, $5, $4, $4 FROM active_user",
         )
         .bind(new.session.id.as_uuid())
         .bind(new.session.user_id.as_uuid())
@@ -583,11 +583,15 @@ impl SessionRepository for PgSessionRepository {
         digest: &TokenDigest,
         now: OffsetDateTime,
     ) -> Result<Option<ActiveSession>, AppError> {
+        // The previous token also matches while its rotation grace period lasts.
         let row = sqlx::query(
-            "SELECT s.id, s.user_id, s.created_at, s.expires_at, \
+            "SELECT s.id, s.user_id, s.created_at, s.expires_at, s.last_seen_at, s.token_rotated_at, \
+                    (s.token_digest <> $1) AS via_previous_token, \
                     u.username, u.created_at AS user_created_at \
              FROM sessions s JOIN users u ON u.id = s.user_id \
-             WHERE s.token_digest = $1 AND s.revoked_at IS NULL AND s.expires_at > $2 \
+             WHERE (s.token_digest = $1 \
+                    OR (s.previous_token_digest = $1 AND s.previous_token_valid_until > $2)) \
+               AND s.revoked_at IS NULL AND s.expires_at > $2 \
                AND u.deleted_at IS NULL AND u.deactivated_at IS NULL AND u.suspended_at IS NULL",
         )
         .bind(digest.0.as_slice())
@@ -605,9 +609,59 @@ impl SessionRepository for PgSessionRepository {
                     .try_get::<OffsetDateTime, _>("user_created_at")
                     .map_err(db_error)?,
             };
-            Ok(ActiveSession { session, user })
+            Ok(ActiveSession {
+                session,
+                user,
+                last_seen_at: row
+                    .try_get::<OffsetDateTime, _>("last_seen_at")
+                    .map_err(db_error)?,
+                token_rotated_at: row
+                    .try_get::<OffsetDateTime, _>("token_rotated_at")
+                    .map_err(db_error)?,
+                via_previous_token: row
+                    .try_get::<bool, _>("via_previous_token")
+                    .map_err(db_error)?,
+            })
         })
         .transpose()
+    }
+
+    async fn touch(&self, session_id: SessionId, now: OffsetDateTime) -> Result<(), AppError> {
+        sqlx::query(
+            "UPDATE sessions SET last_seen_at = $2 WHERE id = $1 AND revoked_at IS NULL AND last_seen_at < $2",
+        )
+        .bind(session_id.as_uuid())
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(db_error)?;
+        Ok(())
+    }
+
+    async fn rotate_token(
+        &self,
+        session_id: SessionId,
+        old_digest: &TokenDigest,
+        new_digest: &TokenDigest,
+        now: OffsetDateTime,
+        grace_until: OffsetDateTime,
+    ) -> Result<bool, AppError> {
+        // The compare-and-set on the current digest lets exactly one of several
+        // concurrent requests rotate the session.
+        let result = sqlx::query(
+            "UPDATE sessions SET token_digest = $3, previous_token_digest = $2, \
+                    previous_token_valid_until = $5, token_rotated_at = $4, last_seen_at = $4 \
+             WHERE id = $1 AND token_digest = $2 AND revoked_at IS NULL",
+        )
+        .bind(session_id.as_uuid())
+        .bind(old_digest.0.as_slice())
+        .bind(new_digest.0.as_slice())
+        .bind(now)
+        .bind(grace_until)
+        .execute(&self.pool)
+        .await
+        .map_err(db_error)?;
+        Ok(result.rows_affected() == 1)
     }
 
     async fn list_active(

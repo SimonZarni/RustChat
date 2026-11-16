@@ -12,6 +12,8 @@ const DEFAULT_BIND: &str = "127.0.0.1:8080";
 const DEFAULT_DB_MAX_CONNECTIONS: u32 = 10;
 const DEFAULT_GROUP_MEMBER_LIMIT: usize = 100;
 const MAX_GROUP_MEMBER_LIMIT: usize = 500;
+const DEFAULT_SESSION_IDLE_DAYS: i64 = 7;
+const MAX_SESSION_IDLE_DAYS: i64 = 30;
 const MAX_RATE_LIMIT: u32 = 100_000;
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -38,6 +40,8 @@ pub enum ConfigError {
     InvalidTrustedProxyHops,
     #[error("RUSTCHAT_GROUP_MEMBER_LIMIT must be between 2 and 500")]
     InvalidGroupMemberLimit,
+    #[error("RUSTCHAT_SESSION_IDLE_TIMEOUT_DAYS must be between 1 and 30")]
+    InvalidSessionIdleTimeout,
     #[error("authentication rate limits must be between 1 and 100000")]
     InvalidRateLimit,
     #[error(
@@ -88,6 +92,8 @@ pub struct Config {
     pub cookie_secure: bool,
     pub client_ip: ClientIpSource,
     pub group_member_limit: usize,
+    /// Sessions end after this long without activity (and at the 30-day absolute limit).
+    pub session_idle_timeout: time::Duration,
     pub rate_limits: RateLimitConfig,
     pub email: Option<EmailConfig>,
 }
@@ -169,6 +175,16 @@ impl Config {
                 .ok()
                 .filter(|n| (2..=MAX_GROUP_MEMBER_LIMIT).contains(n))
                 .ok_or(ConfigError::InvalidGroupMemberLimit)?,
+        };
+
+        let session_idle_timeout = match lookup("RUSTCHAT_SESSION_IDLE_TIMEOUT_DAYS") {
+            None => time::Duration::days(DEFAULT_SESSION_IDLE_DAYS),
+            Some(raw) => time::Duration::days(
+                raw.parse::<i64>()
+                    .ok()
+                    .filter(|n| (1..=MAX_SESSION_IDLE_DAYS).contains(n))
+                    .ok_or(ConfigError::InvalidSessionIdleTimeout)?,
+            ),
         };
 
         let default_rate_limits = RateLimitConfig::default();
@@ -281,6 +297,7 @@ impl Config {
             cookie_secure,
             client_ip,
             group_member_limit,
+            session_idle_timeout,
             rate_limits,
             email,
         })
@@ -475,6 +492,26 @@ mod tests {
         assert_eq!(no_origins.unwrap_err(), ConfigError::MissingAllowedOrigins);
         let blank = with(&[("RUSTCHAT_ALLOWED_ORIGINS", " , ")]);
         assert_eq!(blank.unwrap_err(), ConfigError::MissingAllowedOrigins);
+    }
+
+    #[test]
+    fn session_idle_timeout_defaults_and_is_bounded() {
+        assert_eq!(
+            with(&[]).unwrap().session_idle_timeout,
+            time::Duration::days(7)
+        );
+        assert_eq!(
+            with(&[("RUSTCHAT_SESSION_IDLE_TIMEOUT_DAYS", "30")])
+                .unwrap()
+                .session_idle_timeout,
+            time::Duration::days(30)
+        );
+        for value in ["0", "31", "-1", "week"] {
+            assert_eq!(
+                with(&[("RUSTCHAT_SESSION_IDLE_TIMEOUT_DAYS", value)]).unwrap_err(),
+                ConfigError::InvalidSessionIdleTimeout
+            );
+        }
     }
 
     #[test]

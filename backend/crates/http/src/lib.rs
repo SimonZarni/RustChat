@@ -332,6 +332,10 @@ pub fn router(state: AppState) -> Router {
         .fallback(|| async { ApiError::App(AppError::NotFound) })
         .layer(middleware::from_fn_with_state(
             state.clone(),
+            auth::apply_session_rotation,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
             require_allowed_origin,
         ))
         .layer(middleware::map_response(no_store))

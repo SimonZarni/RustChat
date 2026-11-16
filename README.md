@@ -129,6 +129,7 @@ cargo run -p rustchat-server             # serves on 127.0.0.1:8080
 | `RUSTCHAT_DB_MAX_CONNECTIONS` | no | `10` | Connection pool size |
 | `RUSTCHAT_TRUSTED_PROXY_HOPS` | no | `0` | Number of reverse proxies in front of the server. `0` uses the TCP peer address for rate limiting. Set `1` behind a single proxy such as Caddy, and only if clients cannot reach the server directly. The Compose deployment sets it to `1` |
 | `RUSTCHAT_GROUP_MEMBER_LIMIT` | no | `100` | Maximum members in a group conversation, including its creator (allowed range: 2–500) |
+| `RUSTCHAT_SESSION_IDLE_TIMEOUT_DAYS` | no | `7` | Sessions end after this many days without activity (1–30); the absolute lifetime stays 30 days |
 | `RUSTCHAT_ADMIN_USER_IDS` | no | empty | Comma-separated UUIDs of instance administrators; community roles do not grant this authority |
 | `RUSTCHAT_LOGIN_PER_IP_LIMIT` | no | `30` | Login attempts of any outcome per network per 15 minutes |
 | `RUSTCHAT_LOGIN_PER_USERNAME_LIMIT` | no | `10` | Failed login attempts per username per 15 minutes |

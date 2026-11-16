@@ -18,10 +18,18 @@ use crate::{
     ratelimit::RateLimitConfig,
 };
 
+/// Activity and token-rotation bookkeeping for a fake session.
+struct SessionMeta {
+    last_seen_at: OffsetDateTime,
+    token_rotated_at: OffsetDateTime,
+    previous: Option<(TokenDigest, OffsetDateTime)>,
+}
+
 #[derive(Default)]
 struct Store {
     users: Vec<(User, String)>,
     sessions: Vec<(Session, TokenDigest, bool)>,
+    session_meta: HashMap<SessionId, SessionMeta>,
     privacy: HashMap<UserId, ProfilePrivacy>,
     deactivated: HashSet<UserId>,
     suspended: HashMap<UserId, OffsetDateTime>,
@@ -333,8 +341,47 @@ impl SessionRepository for FakeStore {
             return Err(AppError::Unauthenticated);
         }
         store.deactivated.remove(&new.session.user_id);
+        store.session_meta.insert(
+            new.session.id,
+            SessionMeta {
+                last_seen_at: new.session.created_at,
+                token_rotated_at: new.session.created_at,
+                previous: None,
+            },
+        );
         store.sessions.push((new.session, new.token_digest, false));
         Ok(())
+    }
+
+    async fn touch(&self, session_id: SessionId, now: OffsetDateTime) -> Result<(), AppError> {
+        if let Some(meta) = self.0.lock().unwrap().session_meta.get_mut(&session_id) {
+            meta.last_seen_at = now;
+        }
+        Ok(())
+    }
+
+    async fn rotate_token(
+        &self,
+        session_id: SessionId,
+        old_digest: &TokenDigest,
+        new_digest: &TokenDigest,
+        now: OffsetDateTime,
+        grace_until: OffsetDateTime,
+    ) -> Result<bool, AppError> {
+        let mut store = self.0.lock().unwrap();
+        let Some(entry) = store
+            .sessions
+            .iter_mut()
+            .find(|(s, d, revoked)| s.id == session_id && d == old_digest && !revoked)
+        else {
+            return Ok(false);
+        };
+        entry.1 = *new_digest;
+        let meta = store.session_meta.get_mut(&session_id).unwrap();
+        meta.last_seen_at = now;
+        meta.token_rotated_at = now;
+        meta.previous = Some((*old_digest, grace_until));
+        Ok(true)
     }
 
     async fn find_active(
@@ -343,15 +390,20 @@ impl SessionRepository for FakeStore {
         now: OffsetDateTime,
     ) -> Result<Option<ActiveSession>, AppError> {
         let store = self.0.lock().unwrap();
-        let found = store.sessions.iter().find(|(s, d, revoked)| {
-            d == digest
+        let found = store.sessions.iter().find_map(|(s, d, revoked)| {
+            let meta = store.session_meta.get(&s.id)?;
+            let via_previous = meta
+                .previous
+                .is_some_and(|(previous, until)| &previous == digest && now < until);
+            ((d == digest || via_previous)
                 && !revoked
                 && !s.is_expired_at(now)
                 && !store.deactivated.contains(&s.user_id)
                 && !store.suspended.contains_key(&s.user_id)
-                && !store.deleted.contains(&s.user_id)
+                && !store.deleted.contains(&s.user_id))
+            .then_some((s, meta, via_previous))
         });
-        Ok(found.and_then(|(s, _, _)| {
+        Ok(found.and_then(|(s, meta, via_previous_token)| {
             store
                 .users
                 .iter()
@@ -359,6 +411,9 @@ impl SessionRepository for FakeStore {
                 .map(|(u, _)| ActiveSession {
                     session: s.clone(),
                     user: u.clone(),
+                    last_seen_at: meta.last_seen_at,
+                    token_rotated_at: meta.token_rotated_at,
+                    via_previous_token,
                 })
         }))
     }
@@ -576,5 +631,10 @@ impl Harness {
             clock,
             ttl,
         }
+    }
+
+    pub fn with_lifecycle(mut self, lifecycle: crate::auth::SessionLifecycle) -> Self {
+        self.auth = self.auth.with_session_lifecycle(lifecycle);
+        self
     }
 }

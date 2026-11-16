@@ -78,7 +78,7 @@ Profile lookup is exact by username. When `discoverable` is false, unrelated use
 
 - Usernames: 3 to 32 characters, `[A-Za-z0-9_]`, case-insensitive. Passwords: 12 to 128 characters.
 - Bodies must be `application/json`, at most 16 KiB, with no unknown fields.
-- Session cookie: `__Host-rustchat_session` (`rustchat_session` when `RUSTCHAT_COOKIE_SECURE=false`, local development only). `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/`, `Max-Age` equal to the session lifetime. The value is a 256-bit random token; only its SHA-256 is stored server-side.
+- Session cookie: `__Host-rustchat_session` (`rustchat_session` when `RUSTCHAT_COOKIE_SECURE=false`, local development only). `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/`, `Max-Age` equal to the session lifetime. The value is a 256-bit random token; only its SHA-256 is stored server-side. Sessions end after `RUSTCHAT_SESSION_IDLE_TIMEOUT_DAYS` (default 7) without activity, in addition to the 30-day absolute limit; activity is recorded at most every five minutes. The token is rotated at most once every 24 hours: the response to the first authenticated request after that carries a replacement `Set-Cookie`, and the previous token keeps working for 60 seconds so requests already in flight are not signed out (the grace period never triggers another rotation). The WebSocket session re-check enforces the idle timeout but does not record activity or rotate.
 - CSRF: every non-`GET`/`HEAD`/`OPTIONS` request under `/api/v1` must carry an `Origin` header exactly matching an entry in `RUSTCHAT_ALLOWED_ORIGINS`, otherwise `403 ORIGIN_NOT_ALLOWED`. This includes login and register.
 - Responses under `/api/v1` carry `Cache-Control: no-store`.
 - Rate limiting (see below): `429 RATE_LIMITED` with a `Retry-After` header (whole seconds).
@@ -96,7 +96,7 @@ Set login and registration caps with `RUSTCHAT_LOGIN_PER_IP_LIMIT`, `RUSTCHAT_LO
 
 **Error codes in use:** `VALIDATION_ERROR` (422), `USERNAME_TAKEN` (409), `REGISTRATION_CLOSED` (403), `INVALID_CREDENTIALS` (401), `UNAUTHENTICATED` (401), `ORIGIN_NOT_ALLOWED` (403), `BAD_REQUEST` (400/415/422), `PAYLOAD_TOO_LARGE` (413), `RATE_LIMITED` (429), `NOT_FOUND` (404), `EMAIL_UNAVAILABLE` (503), `INVALID_ACCOUNT_TOKEN` (400), `INVALID_CONVERSATION` (422), `MEMBER_LIMIT` (422), `IDEMPOTENCY_CONFLICT` (409), `INVALID_REACTION` (422), `INVALID_REACTION_REQUEST` (400), `INVALID_DELIVERY_CURSOR` (422), `INTERNAL` (500).
 
-**Not yet implemented:** email verification, session idle timeout and rotation, MFA. Authentication rate-limit state is shared through PostgreSQL, with hashed keys and expiry. Password reset reuses the login IP and per-username rate limit budgets. Password change reuses login IP and per-username failure limits. Multi-instance WebSocket event fan-out is not implemented.
+**Not yet implemented:** email verification, MFA. Authentication rate-limit state is shared through PostgreSQL, with hashed keys and expiry. Password reset reuses the login IP and per-username rate limit budgets. Password change reuses login IP and per-username failure limits. Multi-instance WebSocket event fan-out is not implemented.
 
 ### Implemented: conversations and membership
 

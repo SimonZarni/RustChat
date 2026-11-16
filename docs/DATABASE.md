@@ -70,6 +70,9 @@ The implemented tables are described below (`backend/migrations/0001_identity.sq
 | `token_digest` | `bytea` NOT NULL | SHA-256 of the cookie token; `UNIQUE`, `CHECK` length 32. The token itself is never stored |
 | `created_at`, `expires_at` | `timestamptz` NOT NULL | `CHECK (expires_at > created_at)`; absolute expiry, currently 30 days |
 | `revoked_at` | `timestamptz` | Set on logout or revocation; revoked rows are kept |
+| `last_seen_at` | `timestamptz` NOT NULL | Last recorded activity (written at most every few minutes); the idle timeout is measured from it |
+| `token_rotated_at` | `timestamptz` NOT NULL | When the cookie token was last replaced; rotation is due 24 hours later |
+| `previous_token_digest`, `previous_token_valid_until` | `bytea`, `timestamptz` | The token replaced by the last rotation, still accepted for 60 seconds so parallel requests are not signed out; both null or both set, digest `UNIQUE` when present (migration `0021_session_lifecycle.sql`) |
 
 Indexes: the unique `token_digest` index serves per-request authentication; a partial index on `sessions (user_id) WHERE revoked_at IS NULL` serves session listing. Expired and revoked session rows are not yet purged; a cleanup job is follow-up work.
 

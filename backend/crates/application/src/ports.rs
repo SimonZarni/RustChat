@@ -51,6 +51,12 @@ pub struct NewSession {
 pub struct ActiveSession {
     pub session: Session,
     pub user: User,
+    /// Last recorded activity; used for the idle timeout.
+    pub last_seen_at: OffsetDateTime,
+    /// When the cookie token was last replaced; used to schedule rotation.
+    pub token_rotated_at: OffsetDateTime,
+    /// The request presented the previous token during its rotation grace period.
+    pub via_previous_token: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -448,6 +454,19 @@ pub trait SessionRepository: Send + Sync {
         user_id: UserId,
         now: OffsetDateTime,
     ) -> Result<Vec<Session>, AppError>;
+    /// Record activity for the session.
+    async fn touch(&self, session_id: SessionId, now: OffsetDateTime) -> Result<(), AppError>;
+    /// Replace the session token, keeping `old_digest` valid until `grace_until`.
+    /// Succeeds only while `old_digest` is still the current token, so concurrent
+    /// rotations of one session cannot both win. Returns whether it rotated.
+    async fn rotate_token(
+        &self,
+        session_id: SessionId,
+        old_digest: &TokenDigest,
+        new_digest: &TokenDigest,
+        now: OffsetDateTime,
+        grace_until: OffsetDateTime,
+    ) -> Result<bool, AppError>;
     /// Revoke a session only if it belongs to `user_id`. Returns whether a
     /// session was revoked.
     async fn revoke(

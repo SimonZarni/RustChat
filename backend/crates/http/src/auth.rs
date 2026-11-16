@@ -39,8 +39,51 @@ impl FromRequestParts<AppState> for AuthUser {
             .get(state.config.cookie_name())
             .map(|cookie| cookie.value().to_owned())
             .ok_or(AppError::Unauthenticated)?;
-        Ok(Self(state.auth.authenticate(&token).await?))
+        let request = state.auth.authenticate_request(&token).await?;
+        if let (Some(rotated), Some(slot)) = (
+            request.rotated_token,
+            parts.extensions.get::<RotationSlot>(),
+        ) {
+            slot.0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .replace(rotated);
+        }
+        Ok(Self(request.context))
     }
+}
+
+/// Carries a rotated session token from the extractor to the response layer.
+#[derive(Clone, Default)]
+pub struct RotationSlot(std::sync::Arc<std::sync::Mutex<Option<String>>>);
+
+/// Sets the replacement session cookie when the request's session token was
+/// rotated, unless the handler already set or cleared the session cookie
+/// itself (login, logout, account closure).
+pub async fn apply_session_rotation(
+    State(state): State<AppState>,
+    mut request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let slot = RotationSlot::default();
+    request.extensions_mut().insert(slot.clone());
+    let mut response = next.run(request).await;
+    let rotated = slot.0.lock().unwrap_or_else(|e| e.into_inner()).take();
+    if let Some(token) = rotated {
+        let prefix = format!("{}=", state.config.cookie_name());
+        let handler_set_cookie = response
+            .headers()
+            .get_all(axum::http::header::SET_COOKIE)
+            .iter()
+            .any(|value| value.to_str().is_ok_and(|v| v.starts_with(&prefix)));
+        if !handler_set_cookie && let Ok(value) = session_cookie(&state, token).to_string().parse()
+        {
+            response
+                .headers_mut()
+                .append(axum::http::header::SET_COOKIE, value);
+        }
+    }
+    response
 }
 
 #[derive(Deserialize)]

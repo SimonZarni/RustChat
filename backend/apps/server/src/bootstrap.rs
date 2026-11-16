@@ -3,7 +3,7 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use rustchat_application::{
-    auth::{AuthConfig, AuthService},
+    auth::{AuthConfig, AuthService, SessionLifecycle},
     communities::{CommunityService, CommunityServiceConfig},
     conversations::{ConversationConfig, ConversationService},
     error::AppError,
@@ -55,6 +55,10 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
             rate_limits: config.rate_limits,
         },
     )
+    .with_session_lifecycle(SessionLifecycle {
+        idle_timeout: config.session_idle_timeout,
+        ..SessionLifecycle::default()
+    })
     .with_instance_admins(config.admin_user_ids.iter().copied());
     let auth = if let Some(email) = config.email.as_ref() {
         auth.with_email_delivery(
