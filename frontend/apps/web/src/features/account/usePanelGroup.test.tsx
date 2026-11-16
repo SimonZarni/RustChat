@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useRef } from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { usePanelGroup } from './usePanelGroup'
@@ -22,22 +22,31 @@ function Harness() {
 const open = (id: string) => {
   const panel = screen.getByTestId(id) as HTMLDetailsElement
   panel.open = true
-  fireEvent(panel, new Event('toggle'))
   return panel
 }
 
 describe('usePanelGroup', () => {
-  it('closes the other panel when one opens', () => {
+  it('closes the other panel when one opens', async () => {
+    render(<Harness />)
+    const a = open('a')
+    await waitFor(() => expect(a.open).toBe(true))
+    const b = open('b')
+    await waitFor(() => expect(a.open).toBe(false))
+    expect(b.open).toBe(true)
+  })
+
+  it('keeps the panel opened last when two open back to back', async () => {
     render(<Harness />)
     const a = open('a')
     const b = open('b')
+    await waitFor(() => expect(a.open).toBe(false))
     expect(b.open).toBe(true)
-    expect(a.open).toBe(false)
   })
 
-  it('closes when the pointer goes down outside, but not inside the panel', () => {
+  it('closes when the pointer goes down outside, but not inside the panel', async () => {
     render(<Harness />)
     const a = open('a')
+    await Promise.resolve()
     fireEvent.pointerDown(screen.getByLabelText('inside a'))
     expect(a.open).toBe(true)
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Elsewhere' }))
