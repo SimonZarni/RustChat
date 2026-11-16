@@ -1138,10 +1138,14 @@ implementation.
     and 40 GB SSD as a working hypothesis for a small community and publish
     figures only after a k6 baseline measures them.
 
+-   **Supported desktop operating systems (decided 2026-11-16):** the first
+    desktop release supports Windows 10/11 (x64), macOS (Apple silicon and
+    Intel), and Linux x64 (a Debian/Ubuntu package and an AppImage). Windows
+    and Linux ARM builds are not part of the first release and can be added
+    on demand with CI coverage.
+
 ### Remaining decisions
 
--   Supported desktop operating systems for the first desktop release
-    (recommendation below; awaiting the product owner).
 -   Exact attachment size and storage quota defaults. **Deferred to Phase 2**,
     when object storage is built.
 -   Initial community discovery policy. **Deferred to Phase 2.** Until then
@@ -1149,12 +1153,11 @@ implementation.
 
 ### Proposed resolutions
 
-The first table rows below were accepted on 2026-11-16 (PostgreSQL versions,
-E2EE evaluation, server sizing) and are recorded above. Attachment limits
-and community discovery are deferred to Phase 2. The desktop operating
-system row is still a recommendation awaiting approval. Nothing here
-changes the implementation until it is accepted and, where it is
-architectural, recorded in an ADR.
+The PostgreSQL versions, E2EE evaluation, server sizing and desktop
+operating system rows below were accepted on 2026-11-16 and are recorded
+above. Attachment limits and community discovery are deferred to Phase 2
+and remain recommendations. Nothing here changes the implementation until it
+is accepted and, where it is architectural, recorded in an ADR.
 
 | Decision | Recommendation | Reasoning and what would change it |
 |---|---|---|
