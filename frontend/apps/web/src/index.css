@@ -114,11 +114,11 @@ kbd { padding: 2px 5px; border: 1px solid #e2e5e7; border-radius: 4px; backgroun
 .sidebar-empty > span:not(.empty-glyph) { max-width: 200px; font-size: 11px; line-height: 1.65; }
 .empty-glyph { color: #8997a3; font-size: 29px; line-height: 1; }
 .outline-button { margin-top: 8px; padding: 8px 10px; border: 1px solid #dfe3e6; border-radius: 5px; background: white; color: #536578; font-size: 10px; font-weight: 600; cursor: pointer; }
-.sidebar-profile { display: flex; align-items: center; gap: 9px; padding: 13px 12px; border-top: 1px solid #eff0f1; }
+.sidebar-profile { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 9px; padding: 13px 12px; border-top: 1px solid #eff0f1; }
 .profile-avatar { width: 29px; height: 29px; border-radius: 9px; background: #dfe6eb; color: #506579; font-size: 11px; }
-.profile-copy { min-width: 0; display: grid; gap: 3px; flex: 1; }
+.profile-copy { min-width: 0; display: grid; gap: 3px; flex: 1 1 90px; }
 .profile-copy strong { overflow: hidden; font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.profile-copy span { color: #999fa4; font-size: 9px; }
+.profile-copy span { color: #5b676f; font-size: 9px; }
 .profile-settings { position: relative; }
 .profile-settings summary { color: #6e777d; font-size: 10px; cursor: pointer; }
 .profile-form { position: absolute; z-index: 20; right: 0; bottom: calc(100% + 12px); display: grid; gap: 10px; width: min(280px, calc(100vw - 36px)); padding: 16px; border: 1px solid #e7e9ea; border-radius: 12px; background: #fff; box-shadow: 0 12px 34px #1c27301f; }
@@ -163,7 +163,7 @@ kbd { padding: 2px 5px; border: 1px solid #e2e5e7; border-radius: 4px; backgroun
 .role-assign-form h4 { grid-column: 1 / -1; }
 .danger-button { justify-self: start; padding: 8px 10px; border: 1px solid #efdada; border-radius: 6px; background: #fff7f7; color: #9b4444; font-size: 11px; cursor: pointer; }
 .danger-button:hover { background: #ffeded; }
-.signout-button { padding: 5px 0 5px 6px; border: 0; background: transparent; color: #899198; font-size: 10px; cursor: pointer; }
+.signout-button { padding: 5px 0 5px 6px; border: 0; background: transparent; color: #5b676f; font-size: 10px; cursor: pointer; }
 .signout-button:hover { color: #394957; }
 .account-delete-button { justify-self: start; padding: 7px 9px; border: 1px solid #e1b9b4; border-radius: 7px; background: #fff8f7; color: #a44538; font-size: 11px; cursor: pointer; }
 .account-delete-button:disabled { opacity: .45; cursor: not-allowed; }
@@ -247,6 +247,8 @@ kbd { padding: 2px 5px; border: 1px solid #e2e5e7; border-radius: 4px; backgroun
   .brand-lockup, .intro-rule { left: 40px; }
 }
 @media (max-width: 620px) {
+  /* Settings panels open as a sheet at the bottom of the screen instead of beside their button. */
+  .profile-form, .security-settings > section { position: fixed; left: 14px; right: 14px; bottom: 14px; width: auto; max-height: 70vh; overflow-y: auto; }
   .workspace { height: 100dvh; min-height: 480px; grid-template-columns: minmax(0, 1fr); padding: 0; }
   .workspace-rail { display: none; }
   .conversation-sidebar { display: none; border: 0; }
@@ -381,3 +383,4 @@ html[data-theme='dark'] .conversation-item,
 html[data-theme='dark'] .community-item,
 html[data-theme='dark'] .channel-item { color: var(--ink); }
 .typing-indicator { padding: 4px 14px 8px; color: #839097; font-size: 11px; }
+html[data-theme='dark'] .signout-button { color: #b4bfc7; }
