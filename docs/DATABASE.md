@@ -46,7 +46,7 @@ This is the original planning inventory, not the implemented schema; see **Imple
 
 ### Implemented schema
 
-The implemented tables are described below (`backend/migrations/0001_identity.sql` through `0030_conversation_notification_preferences.sql`). Authentication rate-limit keys are SHA-256 digests with expiry and are shared by server instances using this database. Instance administration adds nullable account suspension timestamps and `instance_admin_audit_log`, retaining suspension and restoration actions with actor and target references. Basic profiles include an editable display name and bio. Attachments store metadata and opaque object keys in PostgreSQL; file bytes live in the configured S3-compatible store. Social relationships are stored in `friend_requests`, canonical `friendships`, and directional `user_blocks`.
+The implemented tables are described below (`backend/migrations/0001_identity.sql` through `0031_notification_dnd_schedules.sql`). Authentication rate-limit keys are SHA-256 digests with expiry and are shared by server instances using this database. Instance administration adds nullable account suspension timestamps and `instance_admin_audit_log`, retaining suspension and restoration actions with actor and target references. Basic profiles include an editable display name and bio. Attachments store metadata and opaque object keys in PostgreSQL; file bytes live in the configured S3-compatible store. Social relationships are stored in `friend_requests`, canonical `friendships`, and directional `user_blocks`.
 
 **`users`**
 
@@ -117,7 +117,11 @@ Messages may reference a parent message for replies. The composite foreign key b
 
 **Social graph** (migration `0027_social_graph.sql`): requests retain sender and recipient direction and are indexed for both inbox views. Friendships store canonical user ID pairs, so one friendship row represents the mutual relationship. Blocks are directional; the runtime checks both directions when enforcing privacy or conversation rules. Creating a block transactionally removes an existing friendship and all pending requests between the pair.
 
-**`notifications`** (migration `0029_notifications.sql`) stores recipient, optional actor, kind, source, optional conversation/message references, creation time and read time. Message text is never copied into a notification. A unique `(recipient_id, kind, source_id)` index makes notification creation idempotent. Direct-message and mention notifications share the message transaction; friend-request notifications share the request transaction. Advancing a conversation read cursor marks notifications through that sequence as read.`r`n`r`n**`conversation_notification_preferences`** (migration `0030_conversation_notification_preferences.sql`) stores per-user message and mention toggles plus permanent or timed mutes for conversations and channel conversations. Missing rows default to enabled and unmuted. Message transactions consult these settings before creating notification records; messages are still delivered.
+**`notifications`** (migration `0029_notifications.sql`) stores recipient, optional actor, kind, source, optional conversation/message references, creation time and read time. Message text is never copied into a notification. A unique `(recipient_id, kind, source_id)` index makes notification creation idempotent. Direct-message and mention notifications share the message transaction; friend-request notifications share the request transaction. Advancing a conversation read cursor marks notifications through that sequence as read.
+
+**`conversation_notification_preferences`** (migration `0030_conversation_notification_preferences.sql`) stores per-user message and mention toggles plus permanent or timed mutes for conversations and channel conversations. Missing rows default to enabled and unmuted. Message transactions consult these settings before creating notification records; messages are still delivered.
+
+**`user_notification_dnd_schedules`** (migration `0031_notification_dnd_schedules.sql`) stores optional local quiet hours, an IANA timezone, and ISO weekday selection for each user.
 
 ## 5. Relationships (conceptual)
 

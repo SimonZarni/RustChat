@@ -10,10 +10,10 @@ use rustchat_application::{
     ports::{
         ActiveSession, AdminUser, AttachmentRepository, AuditEvent, AuditPage, AuditUser,
         CommunityRepository, ConversationNotificationPreferences, ConversationRepository,
-        CreateUserOutcome, EmailStatus, EncryptedSecret, FriendRequest, MessageRepository,
-        MfaRepository, NewSession, NewUser, NotificationRecord, NotificationRepository,
-        SessionRepository, SocialRepository, SocialUser, TokenDigest, TotpRecord, UserCredentials,
-        UserRepository, VerifyEmailOutcome,
+        CreateUserOutcome, DndSchedule, EmailStatus, EncryptedSecret, FriendRequest,
+        MessageRepository, MfaRepository, NewSession, NewUser, NotificationRecord,
+        NotificationRepository, SessionRepository, SocialRepository, SocialUser, TokenDigest,
+        TotpRecord, UserCredentials, UserRepository, VerifyEmailOutcome,
     },
 };
 use rustchat_domain::{
@@ -483,6 +483,45 @@ impl NotificationRepository for PgNotificationRepository {
         sqlx::query("INSERT INTO conversation_notification_preferences(user_id,conversation_id,messages_enabled,mentions_enabled,muted,muted_until,updated_at) VALUES($1,$2,$3,$4,$5,$6,now()) ON CONFLICT(user_id,conversation_id) DO UPDATE SET messages_enabled=EXCLUDED.messages_enabled,mentions_enabled=EXCLUDED.mentions_enabled,muted=EXCLUDED.muted,muted_until=EXCLUDED.muted_until,updated_at=now()")
             .bind(user.as_uuid()).bind(conversation.as_uuid()).bind(messages_enabled).bind(mentions_enabled).bind(muted).bind(muted_until).execute(&self.pool).await.map_err(db_error)?;
         self.preferences(user, conversation).await
+    }
+    async fn dnd_schedule(&self, user: UserId) -> Result<DndSchedule, AppError> {
+        let row = sqlx::query("SELECT enabled,start_time,end_time,timezone,weekdays FROM user_notification_dnd_schedules WHERE user_id=$1")
+            .bind(user.as_uuid()).fetch_optional(&self.pool).await.map_err(db_error)?;
+        if let Some(row) = row {
+            Ok(DndSchedule {
+                enabled: row.try_get("enabled").map_err(db_error)?,
+                start_time: row.try_get("start_time").map_err(db_error)?,
+                end_time: row.try_get("end_time").map_err(db_error)?,
+                timezone: row.try_get("timezone").map_err(db_error)?,
+                weekdays: row.try_get("weekdays").map_err(db_error)?,
+            })
+        } else {
+            Ok(DndSchedule {
+                enabled: false,
+                start_time: "22:00".into(),
+                end_time: "08:00".into(),
+                timezone: "UTC".into(),
+                weekdays: vec![1, 2, 3, 4, 5, 6, 7],
+            })
+        }
+    }
+    async fn set_dnd_schedule(
+        &self,
+        user: UserId,
+        schedule: DndSchedule,
+    ) -> Result<DndSchedule, AppError> {
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_timezone_names WHERE name=$1)")
+                .bind(&schedule.timezone)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(db_error)?;
+        if !exists {
+            return Err(AppError::InvalidNotificationPreferences);
+        }
+        sqlx::query("INSERT INTO user_notification_dnd_schedules(user_id,enabled,start_time,end_time,timezone,weekdays,updated_at) VALUES($1,$2,$3,$4,$5,$6,now()) ON CONFLICT(user_id) DO UPDATE SET enabled=EXCLUDED.enabled,start_time=EXCLUDED.start_time,end_time=EXCLUDED.end_time,timezone=EXCLUDED.timezone,weekdays=EXCLUDED.weekdays,updated_at=now()")
+            .bind(user.as_uuid()).bind(schedule.enabled).bind(&schedule.start_time).bind(&schedule.end_time).bind(&schedule.timezone).bind(&schedule.weekdays).execute(&self.pool).await.map_err(db_error)?;
+        self.dnd_schedule(user).await
     }
 }
 

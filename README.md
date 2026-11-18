@@ -10,7 +10,7 @@ The project is intended to provide direct messaging, group conversations, commun
 
 See the [Phase Completion Audit](docs/PHASE_STATUS.md) for the reviewed Phase 0/1 feature inventory, outstanding P0 requirements and checks run.
 
-Phase 2 has started: attachments include optional S3-compatible storage, scoped signed upload/download URLs, scheduled expired-upload cleanup, and paired database/object-store snapshot scripts. Friends and blocking include request management, relationship controls, and server-side privacy enforcement. In-app notifications cover direct messages, mentions, and friend requests with unread counts, realtime refresh, and per-conversation/channel controls for messages and mentions plus permanent or timed mutes. Storage still requires an operator-provisioned bucket; malware scanning, inline previews, browser/desktop notifications, DND schedules, and community-event alerts remain planned. See [deployment configuration](docs/DEPLOYMENT.md).
+Phase 2 has started: attachments include optional S3-compatible storage, scoped signed upload/download URLs, scheduled expired-upload cleanup, and paired database/object-store snapshot scripts. Friends and blocking include request management, relationship controls, and server-side privacy enforcement. In-app notifications cover direct messages, mentions, and friend requests with unread counts, realtime refresh, and per-conversation/channel controls for messages and mentions plus permanent or timed mutes. Storage still requires an operator-provisioned bucket; malware scanning, inline previews, browser notification alerts are opt-in while the app is open; quiet hours suppress alerts. Native background delivery and community-event alerts remain planned. See [deployment configuration](docs/DEPLOYMENT.md).
 
 The technology stack describes the intended direction. It does not imply that every listed feature or integration has already been implemented. Update this section as working functionality becomes available.
 
@@ -75,24 +75,24 @@ The repository's current structure is summarized below; backend and frontend tes
 
 ```text
 rustchat/
-â”œâ”€â”€ README.md
-â”œâ”€â”€ LICENSE
-â”œâ”€â”€ CLAUDE.md
-â”œâ”€â”€ docs/
-â”‚   â”œâ”€â”€ RustChat-PRD.md
-â”‚   â”œâ”€â”€ UI-DESIGN-SPECIFICATION.md
-â”‚   â”œâ”€â”€ ARCHITECTURE.md
-â”‚   â”œâ”€â”€ DATABASE.md
-â”‚   â”œâ”€â”€ API_AND_REALTIME.md
-â”‚   â”œâ”€â”€ SECURITY.md
-â”‚   â”œâ”€â”€ THREAT_MODEL_AUTH.md
-â”‚   â”œâ”€â”€ MIGRATIONS.md
-â”‚   â”œâ”€â”€ DEPENDENCIES.md
-â”‚   â”œâ”€â”€ CONTRIBUTING.md
-â”‚   â””â”€â”€ adr/
-â”œâ”€â”€ backend/
-â”œâ”€â”€ frontend/
-â”œâ”€â”€ deployment/
+Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ README.md
+Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ LICENSE
+Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ CLAUDE.md
+Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ docs/
+Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ RustChat-PRD.md
+Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ UI-DESIGN-SPECIFICATION.md
+Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ ARCHITECTURE.md
+Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ DATABASE.md
+Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ API_AND_REALTIME.md
+Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ SECURITY.md
+Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ THREAT_MODEL_AUTH.md
+Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ MIGRATIONS.md
+Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ DEPENDENCIES.md
+Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ CONTRIBUTING.md
+Ã¢â€â€š   Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬ adr/
+Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ backend/
+Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ frontend/
+Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ deployment/
 ```
 
 ## Getting started
@@ -130,15 +130,15 @@ cargo run -p rustchat-server             # serves on 127.0.0.1:8080
 | `RUSTCHAT_COOKIE_SECURE` | no | `true` | Set `false` only for local HTTP development |
 | `RUSTCHAT_DB_MAX_CONNECTIONS` | no | `10` | Connection pool size |
 | `RUSTCHAT_TRUSTED_PROXY_HOPS` | no | `0` | Number of reverse proxies in front of the server. `0` uses the TCP peer address for rate limiting. Set `1` behind a single proxy such as Caddy, and only if clients cannot reach the server directly. The Compose deployment sets it to `1` |
-| `RUSTCHAT_GROUP_MEMBER_LIMIT` | no | `100` | Maximum members in a group conversation, including its creator (allowed range: 2â€“500) |
+| `RUSTCHAT_GROUP_MEMBER_LIMIT` | no | `100` | Maximum members in a group conversation, including its creator (allowed range: 2Ã¢â‚¬â€œ500) |
 | `RUSTCHAT_MFA_ENCRYPTION_KEY` | no | unset | 64 hexadecimal characters (32 random bytes, for example `openssl rand -hex 32`) that protect stored authenticator secrets. Setting it enables two-step verification; leave it unset to keep that off. Keep it secret and back it up separately from the database: without it, enrolled authenticators cannot be verified and users must sign in with recovery codes |
 | `RUSTCHAT_MFA_ISSUER` | no | `RustChat` | Service name shown in authenticator apps (up to 64 characters, no colon) |
-| `RUSTCHAT_SESSION_IDLE_TIMEOUT_DAYS` | no | `7` | Sessions end after this many days without activity (1â€“30); the absolute lifetime stays 30 days |
+| `RUSTCHAT_SESSION_IDLE_TIMEOUT_DAYS` | no | `7` | Sessions end after this many days without activity (1Ã¢â‚¬â€œ30); the absolute lifetime stays 30 days |
 | `RUSTCHAT_ADMIN_USER_IDS` | no | empty | Comma-separated UUIDs of instance administrators; community roles do not grant this authority |
 | `RUSTCHAT_LOGIN_PER_IP_LIMIT` | no | `30` | Login attempts of any outcome per network per 15 minutes |
 | `RUSTCHAT_LOGIN_PER_USERNAME_LIMIT` | no | `10` | Failed login attempts per username per 15 minutes |
 | `RUSTCHAT_REGISTER_PER_IP_LIMIT` | no | `5` | Registration attempts per network per hour |
-| `RUSTCHAT_API_READ_LIMIT` | no | `600` | Authenticated read requests per user per minute (1â€“100000; per server process) |
+| `RUSTCHAT_API_READ_LIMIT` | no | `600` | Authenticated read requests per user per minute (1Ã¢â‚¬â€œ100000; per server process) |
 | `RUSTCHAT_API_WRITE_LIMIT` | no | `120` | Other authenticated write requests per user per minute |
 | `RUSTCHAT_MESSAGE_SEND_LIMIT` | no | `60` | Messages sent per user per minute |
 | `RUSTCHAT_CREATE_LIMIT` | no | `30` | Conversations, communities, channels, categories, roles and invites created per user per hour |

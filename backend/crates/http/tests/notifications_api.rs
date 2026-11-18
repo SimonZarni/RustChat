@@ -169,3 +169,18 @@ async fn conversation_preferences_mute_and_filter_notifications(pool: PgPool) {
     let hidden = call(&api, Method::GET, &settings_url, None, Some(&stranger)).await;
     assert_eq!(hidden.status, StatusCode::NOT_FOUND);
 }
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn dnd_schedule_persists_and_validates_timezone_and_weekdays(pool: PgPool) {
+    let api = app(pool, Options::default());
+    let user = sign_in(&api, "dndalice").await;
+    let path = "/api/v1/notifications/dnd-schedule";
+    let defaults = call(&api, Method::GET, path, None, Some(&user)).await;
+    assert_eq!(defaults.status, StatusCode::OK);
+    assert_eq!(defaults.json["enabled"], false);
+    let saved = call(&api, Method::PUT, path, Some(json!({"enabled":true,"start_time":"22:00","end_time":"07:30","timezone":"Asia/Bangkok","weekdays":[1,2,3,4,5]})), Some(&user)).await;
+    assert_eq!(saved.status, StatusCode::OK);
+    assert_eq!(saved.json["timezone"], "Asia/Bangkok");
+    let invalid = call(&api, Method::PUT, path, Some(json!({"enabled":true,"start_time":"22:00","end_time":"07:30","timezone":"No/Such_Zone","weekdays":[1,2,3]})), Some(&user)).await;
+    assert_eq!(invalid.status, StatusCode::BAD_REQUEST);
+}

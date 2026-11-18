@@ -111,6 +111,17 @@ kbd { padding: 2px 5px; border: 1px solid #e2e5e7; border-radius: 4px; backgroun
 .notification-preference-options > label:not(.field-label) { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .notification-preference-options input[type='checkbox'] { width: 18px; height: 18px; accent-color: var(--accent); }
 .notification-preferences-dialog select { width: 100%; min-height: 42px; margin-top: 7px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.dnd-settings { margin: 22px 0; padding-top: 16px; border-top: 1px solid var(--line); }
+.dnd-settings h3 { margin: 0 0 12px; font-size: 15px; }
+.dnd-settings p { color: var(--muted); font-size: 13px; }
+.notification-pref-check { display: flex; align-items: center; justify-content: space-between; }
+.notification-pref-check input, .dnd-days input { accent-color: var(--accent); }
+.dnd-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+.dnd-fields label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+.dnd-fields label:last-child { grid-column: 1 / -1; }
+.dnd-fields input { min-height: 38px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; }
+.dnd-days { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
+.dnd-days label { display: flex; gap: 4px; align-items: center; font-size: 12px; }
 .notification-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .notification-heading h2 { margin-bottom: 14px; }
 .notification-list { margin-top: 8px; }

@@ -66,4 +66,44 @@ impl NotificationService {
             )
             .await
     }
+    pub async fn dnd_schedule(&self, user: UserId) -> Result<crate::ports::DndSchedule, AppError> {
+        self.repository.dnd_schedule(user).await
+    }
+    pub async fn set_dnd_schedule(
+        &self,
+        user: UserId,
+        schedule: crate::ports::DndSchedule,
+    ) -> Result<crate::ports::DndSchedule, AppError> {
+        let valid_time = |value: &str| {
+            value.len() == 5
+                && value.as_bytes().get(2) == Some(&b':')
+                && value
+                    .get(..2)
+                    .and_then(|v| v.parse::<u8>().ok())
+                    .is_some_and(|h| h < 24)
+                && value
+                    .get(3..)
+                    .and_then(|v| v.parse::<u8>().ok())
+                    .is_some_and(|m| m < 60)
+        };
+        let unique_days = schedule
+            .weekdays
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            == schedule.weekdays.len();
+        if !valid_time(&schedule.start_time)
+            || !valid_time(&schedule.end_time)
+            || schedule.start_time == schedule.end_time
+            || schedule.timezone.is_empty()
+            || schedule.timezone.len() > 64
+            || schedule.weekdays.is_empty()
+            || schedule.weekdays.len() > 7
+            || !unique_days
+            || schedule.weekdays.iter().any(|day| !(1..=7).contains(day))
+        {
+            return Err(AppError::InvalidNotificationPreferences);
+        }
+        self.repository.set_dnd_schedule(user, schedule).await
+    }
 }

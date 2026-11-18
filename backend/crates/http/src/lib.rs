@@ -336,6 +336,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/friends", get(social::friends))
         .route("/notifications", get(notifications::inbox))
+        .route(
+            "/notifications/dnd-schedule",
+            get(notifications::dnd_schedule).put(notifications::set_dnd_schedule),
+        )
         .route("/notifications/read-all", put(notifications::mark_all_read))
         .route(
             "/notifications/{notification_id}/read",

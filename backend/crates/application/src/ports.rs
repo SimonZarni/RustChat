@@ -366,6 +366,15 @@ pub struct ConversationNotificationPreferences {
     pub muted_until: Option<OffsetDateTime>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DndSchedule {
+    pub enabled: bool,
+    pub start_time: String,
+    pub end_time: String,
+    pub timezone: String,
+    pub weekdays: Vec<i16>,
+}
+
 #[async_trait]
 pub trait NotificationRepository: Send + Sync {
     async fn list(&self, user: UserId, limit: usize) -> Result<Vec<NotificationRecord>, AppError>;
@@ -386,6 +395,12 @@ pub trait NotificationRepository: Send + Sync {
         muted: bool,
         muted_until: Option<OffsetDateTime>,
     ) -> Result<ConversationNotificationPreferences, AppError>;
+    async fn dnd_schedule(&self, user: UserId) -> Result<DndSchedule, AppError>;
+    async fn set_dnd_schedule(
+        &self,
+        user: UserId,
+        schedule: DndSchedule,
+    ) -> Result<DndSchedule, AppError>;
 }
 
 #[async_trait]
