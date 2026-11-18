@@ -16,6 +16,7 @@ export function useConversation(
   activeId: string | null,
   socketRef: MutableRefObject<WebSocket | null>,
   onError: (message: string) => void,
+  onNotificationsRead: () => void = () => {},
 ) {
   const dialogs = useDialogs()
   const [messages, setMessages] = useState<Message[]>([])
@@ -81,8 +82,9 @@ export function useConversation(
       const result = await api<{ cursor: ReadCursor }>(`/api/v1/conversations/${conversationId}/read-cursor`, { method: 'PUT', body: JSON.stringify({ sequence }) })
       const { user_id: who, sequence: position } = result.cursor
       if (activeIdRef.current === conversationId) setReadCursors((current) => ({ ...current, [who]: position }))
+      onNotificationsRead()
     } catch { /* A later message or reconnect retries cursor synchronization. */ }
-  }, [])
+  }, [onNotificationsRead])
 
   const recordDelivered = useCallback((sequence: number) => {
     const conversationId = activeIdRef.current

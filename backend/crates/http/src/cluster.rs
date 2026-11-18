@@ -15,8 +15,8 @@ use tokio::{sync::broadcast, task::JoinHandle};
 use uuid::Uuid;
 
 use crate::{
-    AppEvents, CommunityEvent, DeliveryCursorEvent, PresenceEvent, ReactionEvent, ReadCursorEvent,
-    TypingEvent,
+    AppEvents, CommunityEvent, DeliveryCursorEvent, NotificationEvent, PresenceEvent,
+    ReactionEvent, ReadCursorEvent, TypingEvent,
 };
 
 pub(crate) const TOPIC_MESSAGE: &str = "message";
@@ -26,6 +26,7 @@ pub(crate) const TOPIC_DELIVERY_CURSOR: &str = "delivery_cursor";
 pub(crate) const TOPIC_REACTION: &str = "reaction";
 pub(crate) const TOPIC_PRESENCE: &str = "presence";
 pub(crate) const TOPIC_COMMUNITY: &str = "community";
+pub(crate) const TOPIC_NOTIFICATION: &str = "notification";
 
 #[derive(Deserialize)]
 struct MessageRef {
@@ -50,6 +51,7 @@ pub type RemoteEventHandler = Arc<dyn Fn(&str, serde_json::Value) + Send + Sync>
 pub fn remote_event_handler(
     events: AppEvents,
     outbox: Arc<dyn OutboxRepository>,
+    notifications: broadcast::Sender<NotificationEvent>,
 ) -> RemoteEventHandler {
     Arc::new(move |topic, payload| match topic {
         TOPIC_MESSAGE => {
@@ -77,6 +79,7 @@ pub fn remote_event_handler(
         TOPIC_DELIVERY_CURSOR => forward::<DeliveryCursorEvent>(payload, &events.delivery_cursors),
         TOPIC_REACTION => forward::<ReactionEvent>(payload, &events.reactions),
         TOPIC_PRESENCE => forward::<PresenceEvent>(payload, &events.presence),
+        TOPIC_NOTIFICATION => forward::<NotificationEvent>(payload, &notifications),
         TOPIC_COMMUNITY => {
             if let Ok(wire) = serde_json::from_value::<WireCommunityEvent>(payload) {
                 let kind = match wire.kind.as_str() {

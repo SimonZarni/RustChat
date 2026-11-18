@@ -16,6 +16,7 @@ use rustchat_application::{
     communities::{CommunityService, CommunityServiceConfig},
     conversations::{ConversationConfig, ConversationService},
     messages::{MessageConfig, MessageService},
+    notifications::NotificationService,
     ports::RateLimitRule,
     ratelimit::{ApiRateLimitConfig, ApiRateLimiter, RateLimitConfig},
     social::SocialService,
@@ -26,7 +27,8 @@ use rustchat_infrastructure::{
     mfa::AesGcmTotpEngine,
     postgres::{
         PgCommunityRepository, PgConversationRepository, PgMessageRepository, PgMfaRepository,
-        PgOutboxRepository, PgSessionRepository, PgSocialRepository, PgUserRepository,
+        PgNotificationRepository, PgOutboxRepository, PgSessionRepository, PgSocialRepository,
+        PgUserRepository,
     },
     ratelimit::InMemoryRateLimiter,
     security::{Argon2Hasher, OsTokenService, SystemClock},
@@ -191,6 +193,7 @@ pub fn node(pool: PgPool, options: Options) -> Node {
         community: tokio::sync::broadcast::channel(256).0,
     };
     let (resync, _) = tokio::sync::broadcast::channel(16);
+    let (notification_events, _) = tokio::sync::broadcast::channel(512);
     let mut state = AppState::new(
         Arc::new(auth),
         Arc::new(conversations),
@@ -206,7 +209,11 @@ pub fn node(pool: PgPool, options: Options) -> Node {
     )
     .with_social(Arc::new(SocialService::new(Arc::new(
         PgSocialRepository::new(pool.clone()),
-    ))));
+    ))))
+    .with_notifications(Arc::new(NotificationService::new(Arc::new(
+        PgNotificationRepository::new(pool.clone()),
+    ))))
+    .with_notification_events(notification_events.clone());
     if let Some(limits) = options.api_limits {
         state = state.with_api_rate_limiter(Arc::new(ApiRateLimiter::new(
             Arc::new(InMemoryRateLimiter::new()),
@@ -222,7 +229,11 @@ pub fn node(pool: PgPool, options: Options) -> Node {
         let bus = PgEventBus::start(
             pool.clone(),
             instance,
-            cluster::remote_event_handler(events.clone(), outbox.clone()),
+            cluster::remote_event_handler(
+                events.clone(),
+                outbox.clone(),
+                notification_events.clone(),
+            ),
             cluster::gap_handler(resync.clone()),
         );
         state = state.with_cluster(

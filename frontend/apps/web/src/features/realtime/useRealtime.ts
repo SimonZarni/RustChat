@@ -23,6 +23,8 @@ type RealtimeEvent = {
     emoji?: string
     online?: boolean | null
     community_id?: string
+    notification_id?: string
+    kind?: string
   }
 }
 
@@ -37,6 +39,7 @@ type Params = {
   socketRef: MutableRefObject<WebSocket | null>
   conversation: ConversationState
   communities: CommunityState
+  onNotification: () => void
 }
 
 /**
@@ -45,14 +48,14 @@ type Params = {
  * events into the conversation and community state. Events are only a
  * low-latency hint; the HTTP history is the source of truth.
  */
-export function useRealtime({ user, activeId, socketRef, conversation, communities }: Params) {
+export function useRealtime({ user, activeId, socketRef, conversation, communities, onNotification }: Params) {
   const [connected, setConnected] = useState(false)
   const [presence, setPresence] = useState<Record<string, boolean>>({})
   const [typingUserId, setTypingUserId] = useState<string | null>(null)
   const typingExpiryRef = useRef<number | null>(null)
   // The socket effect restarts only when the signed-in user changes, so it reads the latest state through this ref.
-  const latest = useRef({ conversation, communities, userId: user?.id })
-  useLayoutEffect(() => { latest.current = { conversation, communities, userId: user?.id } })
+  const latest = useRef({ conversation, communities, userId: user?.id, onNotification })
+  useLayoutEffect(() => { latest.current = { conversation, communities, userId: user?.id, onNotification } })
 
   const userId = user?.id
   useEffect(() => {
@@ -81,6 +84,7 @@ export function useRealtime({ user, activeId, socketRef, conversation, communiti
         })
         return
       }
+      if (data.type === 'notification.created') { latest.current.onNotification(); return }
       if (data.type === 'delivery_ack' && data.sequence !== undefined && latest.current.userId) {
         convo.applyDeliveryCursor(latest.current.userId, data.sequence)
         return

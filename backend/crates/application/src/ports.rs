@@ -333,13 +333,35 @@ pub trait SocialRepository: Send + Sync {
         &self,
         sender: UserId,
         username: &Username,
-    ) -> Result<uuid::Uuid, AppError>;
+    ) -> Result<(uuid::Uuid, UserId), AppError>;
     async fn accept_request(&self, user: UserId, request: uuid::Uuid) -> Result<(), AppError>;
     async fn reject_request(&self, user: UserId, request: uuid::Uuid) -> Result<(), AppError>;
     async fn cancel_request(&self, user: UserId, request: uuid::Uuid) -> Result<(), AppError>;
     async fn remove_friend(&self, user: UserId, friend: UserId) -> Result<(), AppError>;
     async fn block(&self, user: UserId, username: &Username) -> Result<(), AppError>;
     async fn unblock(&self, user: UserId, blocked: UserId) -> Result<(), AppError>;
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct NotificationRecord {
+    pub id: uuid::Uuid,
+    pub kind: String,
+    pub actor_id: Option<uuid::Uuid>,
+    pub actor_username: Option<String>,
+    pub conversation_id: Option<uuid::Uuid>,
+    pub message_id: Option<uuid::Uuid>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub read_at: Option<OffsetDateTime>,
+}
+
+#[async_trait]
+pub trait NotificationRepository: Send + Sync {
+    async fn list(&self, user: UserId, limit: usize) -> Result<Vec<NotificationRecord>, AppError>;
+    async fn unread_count(&self, user: UserId) -> Result<i64, AppError>;
+    async fn mark_read(&self, user: UserId, notification: uuid::Uuid) -> Result<(), AppError>;
+    async fn mark_all_read(&self, user: UserId) -> Result<(), AppError>;
 }
 
 #[async_trait]

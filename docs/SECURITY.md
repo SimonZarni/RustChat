@@ -106,6 +106,7 @@ Do not advertise RustChat as E2EE until the complete key lifecycle and relevant 
 - Do not log passwords, access tokens, private keys, encryption secrets or private message contents.
 - Define retention and access controls for audit logs.
 - Minimize personal data in telemetry and error reporting.
+- Notification records and realtime hints omit message text; inbox reads are scoped to the recipient and notifications from blocked users are hidden.
 
 ## 12. Threats to test
 

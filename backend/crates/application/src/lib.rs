@@ -6,6 +6,7 @@ pub mod communities;
 pub mod conversations;
 pub mod error;
 pub mod messages;
+pub mod notifications;
 pub mod ports;
 pub mod ratelimit;
 pub mod social;

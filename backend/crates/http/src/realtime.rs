@@ -191,6 +191,34 @@ struct CommunityUpdatePayload {
     community_id: Uuid,
 }
 
+#[derive(Serialize)]
+struct NotificationEnvelope {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    version: u8,
+    event_id: Uuid,
+    #[serde(with = "time::serde::rfc3339")]
+    occurred_at: time::OffsetDateTime,
+    payload: NotificationPayload,
+}
+
+#[derive(Serialize)]
+struct NotificationPayload {
+    kind: String,
+}
+
+fn notification_envelope(event: &crate::NotificationEvent) -> NotificationEnvelope {
+    NotificationEnvelope {
+        kind: "notification.created",
+        version: 1,
+        event_id: event.event_id,
+        occurred_at: event.occurred_at,
+        payload: NotificationPayload {
+            kind: event.kind.clone(),
+        },
+    }
+}
+
 fn community_update_envelope(event: &crate::CommunityEvent) -> CommunityUpdateEnvelope {
     CommunityUpdateEnvelope {
         kind: event.kind,
@@ -255,6 +283,7 @@ async fn run_socket(socket: WebSocket, state: AppState, user_id: UserId, token: 
     let mut delivery_cursor_events = state.delivery_cursor_events.subscribe();
     let mut presence_events = state.presence_events.subscribe();
     let mut community_events = state.community_events.subscribe();
+    let mut notification_events = state.notification_events.subscribe();
     let mut resync_events = state.resync_events.subscribe();
     let became_online = state.presence.connect(user_id.as_uuid()).await;
     if became_online
@@ -548,6 +577,23 @@ async fn run_socket(socket: WebSocket, state: AppState, user_id: UserId, token: 
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                         close_socket(&mut outgoing, 1013, "reconnect and reload community state").await;
+                        break;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            event = notification_events.recv() => {
+                match event {
+                    Ok(event) if event.recipient_id == user_id.as_uuid() => {
+                        let Ok(text) = serde_json::to_string(&notification_envelope(&event)) else {
+                            close_socket(&mut outgoing, 1011, "event serialization failed").await;
+                            break;
+                        };
+                        if !send_frame(&mut outgoing, WsMessage::Text(text.into())).await { break; }
+                    }
+                    Ok(_) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        close_socket(&mut outgoing, 1013, "reconnect and refresh notifications").await;
                         break;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,

@@ -11,8 +11,8 @@ use rustchat_application::{
         ActiveSession, AdminUser, AttachmentRepository, AuditEvent, AuditPage, AuditUser,
         CommunityRepository, ConversationRepository, CreateUserOutcome, EmailStatus,
         EncryptedSecret, FriendRequest, MessageRepository, MfaRepository, NewSession, NewUser,
-        SessionRepository, SocialRepository, SocialUser, TokenDigest, TotpRecord, UserCredentials,
-        UserRepository, VerifyEmailOutcome,
+        NotificationRecord, NotificationRepository, SessionRepository, SocialRepository,
+        SocialUser, TokenDigest, TotpRecord, UserCredentials, UserRepository, VerifyEmailOutcome,
     },
 };
 use rustchat_domain::{
@@ -395,6 +395,58 @@ fn audit_page(rows: &[PgRow], limit: usize) -> Result<AuditPage, AppError> {
 }
 
 #[derive(Clone)]
+pub struct PgNotificationRepository {
+    pool: PgPool,
+}
+impl PgNotificationRepository {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl NotificationRepository for PgNotificationRepository {
+    async fn list(&self, user: UserId, limit: usize) -> Result<Vec<NotificationRecord>, AppError> {
+        let rows=sqlx::query("SELECT n.id,n.kind,n.actor_id,u.username AS actor_username,n.conversation_id,n.message_id,n.created_at,n.read_at FROM notifications n LEFT JOIN users u ON u.id=n.actor_id WHERE n.recipient_id=$1 AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$1 AND b.blocked_id=n.actor_id) OR (b.blocker_id=n.actor_id AND b.blocked_id=$1)) ORDER BY n.created_at DESC,n.id DESC LIMIT $2")
+            .bind(user.as_uuid()).bind(i64::try_from(limit.clamp(1,100)).unwrap_or(100)).fetch_all(&self.pool).await.map_err(db_error)?;
+        rows.into_iter()
+            .map(|r| {
+                Ok(NotificationRecord {
+                    id: r.try_get("id").map_err(db_error)?,
+                    kind: r.try_get("kind").map_err(db_error)?,
+                    actor_id: r.try_get("actor_id").map_err(db_error)?,
+                    actor_username: r.try_get("actor_username").map_err(db_error)?,
+                    conversation_id: r.try_get("conversation_id").map_err(db_error)?,
+                    message_id: r.try_get("message_id").map_err(db_error)?,
+                    created_at: r.try_get("created_at").map_err(db_error)?,
+                    read_at: r.try_get("read_at").map_err(db_error)?,
+                })
+            })
+            .collect()
+    }
+    async fn unread_count(&self, user: UserId) -> Result<i64, AppError> {
+        sqlx::query_scalar("SELECT count(*) FROM notifications n WHERE n.recipient_id=$1 AND n.read_at IS NULL AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$1 AND b.blocked_id=n.actor_id) OR (b.blocker_id=n.actor_id AND b.blocked_id=$1))")
+            .bind(user.as_uuid()).fetch_one(&self.pool).await.map_err(db_error)
+    }
+    async fn mark_read(&self, user: UserId, id: Uuid) -> Result<(), AppError> {
+        let r=sqlx::query("UPDATE notifications SET read_at=COALESCE(read_at,now()) WHERE recipient_id=$1 AND id=$2").bind(user.as_uuid()).bind(id).execute(&self.pool).await.map_err(db_error)?;
+        if r.rows_affected() == 0 {
+            return Err(AppError::NotFound);
+        }
+        Ok(())
+    }
+    async fn mark_all_read(&self, user: UserId) -> Result<(), AppError> {
+        sqlx::query(
+            "UPDATE notifications SET read_at=now() WHERE recipient_id=$1 AND read_at IS NULL",
+        )
+        .bind(user.as_uuid())
+        .execute(&self.pool)
+        .await
+        .map_err(db_error)?;
+        Ok(())
+    }
+}
+
 pub struct PgSocialRepository {
     pool: PgPool,
 }
@@ -455,9 +507,14 @@ impl SocialRepository for PgSocialRepository {
             })
             .collect()
     }
-    async fn send_request(&self, sender: UserId, username: &Username) -> Result<Uuid, AppError> {
+    async fn send_request(
+        &self,
+        sender: UserId,
+        username: &Username,
+    ) -> Result<(Uuid, UserId), AppError> {
         let mut tx = self.pool.begin().await.map_err(db_error)?;
-        let target:Uuid=sqlx::query_scalar("SELECT id FROM users WHERE username=$1 AND deleted_at IS NULL AND deactivated_at IS NULL AND suspended_at IS NULL").bind(username.as_str()).fetch_optional(&mut *tx).await.map_err(db_error)?.ok_or(AppError::NotFound)?;
+        let target:Uuid=sqlx::query_scalar("SELECT u.id FROM users u JOIN user_profiles p ON p.user_id=u.id WHERE u.username=$1 AND u.deleted_at IS NULL AND u.deactivated_at IS NULL AND u.suspended_at IS NULL AND (p.discoverable OR EXISTS(SELECT 1 FROM conversation_members mine JOIN conversation_members theirs ON theirs.conversation_id=mine.conversation_id WHERE mine.user_id=$2 AND theirs.user_id=u.id))")
+            .bind(username.as_str()).bind(sender.as_uuid()).fetch_optional(&mut *tx).await.map_err(db_error)?.ok_or(AppError::NotFound)?;
         if target == sender.as_uuid() {
             return Err(AppError::InvalidConversationRequest);
         }
@@ -477,8 +534,10 @@ impl SocialRepository for PgSocialRepository {
         .fetch_one(&mut *tx)
         .await
         .map_err(db_error)?;
+        sqlx::query("INSERT INTO notifications(id,recipient_id,actor_id,kind,source_id,created_at) VALUES($1,$2,$3,'friend_request',$4,now()) ON CONFLICT DO NOTHING")
+            .bind(Uuid::now_v7()).bind(target).bind(sender.as_uuid()).bind(id).execute(&mut *tx).await.map_err(db_error)?;
         tx.commit().await.map_err(db_error)?;
-        Ok(id)
+        Ok((id, UserId::from_uuid(target)))
     }
     async fn accept_request(&self, user: UserId, request: Uuid) -> Result<(), AppError> {
         let mut tx = self.pool.begin().await.map_err(db_error)?;
@@ -491,6 +550,8 @@ impl SocialRepository for PgSocialRepository {
         .await
         .map_err(db_error)?
         .ok_or(AppError::NotFound)?;
+        sqlx::query("UPDATE notifications SET read_at=COALESCE(read_at,now()) WHERE recipient_id=$1 AND kind='friend_request' AND source_id=$2")
+            .bind(user.as_uuid()).bind(request).execute(&mut *tx).await.map_err(db_error)?;
         sqlx::query("INSERT INTO friendships(user_low,user_high) VALUES(LEAST($1,$2),GREATEST($1,$2)) ON CONFLICT DO NOTHING").bind(user.as_uuid()).bind(sender).execute(&mut *tx).await.map_err(db_error)?;
         tx.commit().await.map_err(db_error)
     }
@@ -537,6 +598,8 @@ impl SocialRepository for PgSocialRepository {
         .await
         .map_err(db_error)?;
         sqlx::query("DELETE FROM friend_requests WHERE (sender_id=$1 AND recipient_id=$2) OR (sender_id=$2 AND recipient_id=$1)").bind(user.as_uuid()).bind(target).execute(&mut *tx).await.map_err(db_error)?;
+        sqlx::query("UPDATE notifications SET read_at=COALESCE(read_at,now()) WHERE (recipient_id=$1 AND actor_id=$2) OR (recipient_id=$2 AND actor_id=$1)")
+            .bind(user.as_uuid()).bind(target).execute(&mut *tx).await.map_err(db_error)?;
         tx.commit().await.map_err(db_error)
     }
     async fn unblock(&self, user: UserId, blocked: UserId) -> Result<(), AppError> {
@@ -560,16 +623,19 @@ impl PgSocialRepository {
             "sender_id"
         };
         let sql = format!("DELETE FROM friend_requests WHERE id=$1 AND {owner}=$2");
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
         let r = sqlx::query(&sql)
             .bind(id)
             .bind(user.as_uuid())
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(db_error)?;
         if r.rows_affected() == 0 {
             return Err(AppError::NotFound);
         }
-        Ok(())
+        sqlx::query("UPDATE notifications SET read_at=COALESCE(read_at,now()) WHERE kind='friend_request' AND source_id=$1")
+            .bind(id).execute(&mut *tx).await.map_err(db_error)?;
+        tx.commit().await.map_err(db_error)
     }
 }
 
@@ -2838,6 +2904,21 @@ impl MessageRepository for PgMessageRepository {
         sqlx::query("INSERT INTO outbox_events (id, conversation_id, sequence, event_type, payload, created_at) VALUES ($1, $2, $3, 'message.created', $4, $5)")
             .bind(id.as_uuid()).bind(conversation.as_uuid()).bind(sequence).bind(payload).bind(now)
             .execute(&mut *tx).await.map_err(db_error)?;
+        let direct_peer: Option<Uuid> = sqlx::query_scalar("SELECT cm.user_id FROM conversations c JOIN conversation_members cm ON cm.conversation_id=c.id WHERE c.id=$1 AND c.kind='direct' AND cm.user_id<>$2")
+            .bind(conversation.as_uuid()).bind(caller.as_uuid()).fetch_optional(&mut *tx).await.map_err(db_error)?;
+        if let Some(recipient) = direct_peer {
+            sqlx::query("INSERT INTO notifications(id,recipient_id,actor_id,kind,source_id,conversation_id,message_id,created_at) VALUES($1,$2,$3,'direct_message',$4,$5,$4,$6) ON CONFLICT DO NOTHING")
+                .bind(Uuid::now_v7()).bind(recipient).bind(caller.as_uuid()).bind(id.as_uuid()).bind(conversation.as_uuid()).bind(now)
+                .execute(&mut *tx).await.map_err(db_error)?;
+        }
+        for recipient in &mentioned_user_ids {
+            if *recipient == caller {
+                continue;
+            }
+            sqlx::query("INSERT INTO notifications(id,recipient_id,actor_id,kind,source_id,conversation_id,message_id,created_at) SELECT $1,$2,$3,'mention',$4,$5,$4,$6 WHERE NOT EXISTS(SELECT 1 FROM user_blocks WHERE (blocker_id=$2 AND blocked_id=$3) OR (blocker_id=$3 AND blocked_id=$2)) ON CONFLICT DO NOTHING")
+                .bind(Uuid::now_v7()).bind(recipient.as_uuid()).bind(caller.as_uuid()).bind(id.as_uuid()).bind(conversation.as_uuid()).bind(now)
+                .execute(&mut *tx).await.map_err(db_error)?;
+        }
         tx.commit().await.map_err(db_error)?;
         Ok(Message {
             id,
@@ -2987,6 +3068,10 @@ impl MessageRepository for PgMessageRepository {
             .fetch_one(&mut *tx)
             .await
             .map_err(db_error)?;
+        let effective_sequence: i64 = row.try_get("sequence").map_err(db_error)?;
+        sqlx::query("UPDATE notifications n SET read_at=COALESCE(n.read_at,$4) FROM messages m WHERE n.recipient_id=$1 AND n.message_id=m.id AND m.conversation_id=$2 AND m.sequence<=$3 AND n.read_at IS NULL")
+            .bind(caller.as_uuid()).bind(conversation.as_uuid()).bind(effective_sequence).bind(now)
+            .execute(&mut *tx).await.map_err(db_error)?;
         tx.commit().await.map_err(db_error)?;
         Ok(ReadCursor {
             user_id: UserId::from_uuid(row.try_get("user_id").map_err(db_error)?),

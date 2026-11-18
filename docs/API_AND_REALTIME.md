@@ -145,6 +145,18 @@ All routes require the session cookie; mutations also require an allowed `Origin
 
 Blocking hides profiles and presence in both directions, prevents new friend requests and direct conversations, rejects new direct messages in an existing direct conversation, and prevents creating or adding users together in a new group when any pair has blocked each other. Existing conversation history remains available to existing members. Blocking is enforced server-side.
 
+### Implemented: in-app notifications
+
+All routes require the session cookie; writes also require an allowed `Origin`. Notifications currently cover direct messages, @mentions, and friend requests. Records are durable, unread counts are computed server-side, and message text is never included.
+
+| Method and path | Success | Notes |
+|---|---|---|
+| `GET /api/v1/notifications?limit=50` | `200 {"notifications":[...],"unread_count":2}` | Most recent 1–100 notifications; actor username may be null |
+| `PUT /api/v1/notifications/{id}/read` | `204` | Recipient only; other users' notification IDs return `404` |
+| `PUT /api/v1/notifications/read-all` | `204` | Marks the caller's unread items as read |
+
+Each item contains `id`, `kind` (`direct_message`, `mention`, or `friend_request`), optional `actor_id`/`actor_username`, optional `conversation_id`/`message_id`, `created_at`, and nullable `read_at`. Friend request accept/reject/cancel also marks its notification read. Advancing a conversation read cursor marks direct-message and mention notifications through that sequence as read. Browser/desktop delivery, per-conversation preferences, mutes, DND schedules, and selected community events remain planned.
+
 The member profile response is the supported way for a conversation participant to resolve member IDs to usernames. It does not provide a global user directory.
 
 ### Implemented: communities, channels and roles
@@ -315,6 +327,7 @@ Event types are stable, namespaced and versioned (all are version 1 today). Impl
 | `typing.started`, `typing.stopped` | subscribed conversation, other members; ephemeral | `user_id` |
 | `presence.updated` | users sharing a conversation, subject to `presence_visible` | `user_id`, `online` |
 | `channels.updated`, `members.updated` | community members; invalidation only | `community_id` |
+| `notification.created` | named recipient only | `kind`; event ID is a source reference; no message content |
 
 Control replies to client commands are not versioned events: `{"type":"subscribed"|"unsubscribed","conversation_id":"..."}`, `typing_ack` (conversation_id), `delivery_ack` (conversation_id, sequence) and `{"type":"error","conversation_id":<id or null>,"code":"..."}`. Error codes are `BAD_REQUEST` (malformed or unknown command), `NOT_FOUND` (no access to the conversation), `SUBSCRIPTION_LIMIT` (more than 100 subscriptions) and `INVALID_DELIVERY_CURSOR`.
 

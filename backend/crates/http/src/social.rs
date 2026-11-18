@@ -75,9 +75,14 @@ pub async fn send_request(
     AuthUser(a): AuthUser,
     ApiJson(b): ApiJson<UsernameBody>,
 ) -> Result<Json<RequestEnvelope>, ApiError> {
-    Ok(Json(RequestEnvelope {
-        id: service(&s)?.send(a.user.id, &b.username).await?,
-    }))
+    let (id, recipient) = service(&s)?.send(a.user.id, &b.username).await?;
+    s.publish_notification(crate::NotificationEvent {
+        event_id: id,
+        recipient_id: recipient.as_uuid(),
+        kind: "friend_request".to_owned(),
+        occurred_at: time::OffsetDateTime::now_utc(),
+    });
+    Ok(Json(RequestEnvelope { id }))
 }
 pub async fn accept_request(
     State(s): State<AppState>,

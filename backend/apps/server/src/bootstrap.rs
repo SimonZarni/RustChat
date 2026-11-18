@@ -9,6 +9,7 @@ use rustchat_application::{
     conversations::{ConversationConfig, ConversationService},
     error::AppError,
     messages::{MessageConfig, MessageService},
+    notifications::NotificationService,
     ratelimit::ApiRateLimiter,
     social::SocialService,
 };
@@ -19,8 +20,8 @@ use rustchat_infrastructure::{
     mfa::AesGcmTotpEngine,
     postgres::{
         self, PgAttachmentRepository, PgCommunityRepository, PgConversationRepository,
-        PgMessageRepository, PgMfaRepository, PgOutboxRepository, PgSessionRepository,
-        PgSocialRepository, PgUserRepository,
+        PgMessageRepository, PgMfaRepository, PgNotificationRepository, PgOutboxRepository,
+        PgSessionRepository, PgSocialRepository, PgUserRepository,
     },
     ratelimit::{InMemoryRateLimiter, PgRateLimiter},
     security::{Argon2Hasher, OsTokenService, SystemClock},
@@ -114,6 +115,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     let (delivery_cursor_sender, _) = tokio::sync::broadcast::channel(256);
     let (presence_sender, _) = tokio::sync::broadcast::channel(256);
     let (community_sender, _) = tokio::sync::broadcast::channel(256);
+    let (notification_sender, _) = tokio::sync::broadcast::channel(512);
     // Several instances can share one database: events, outbox dispatch and presence
     // coordinate through it. A random id tells an instance's own events apart.
     let instance_id = uuid::Uuid::now_v7();
@@ -131,7 +133,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     let bus = PgEventBus::start(
         pool.clone(),
         instance_id,
-        cluster::remote_event_handler(events.clone(), outbox.clone()),
+        cluster::remote_event_handler(events.clone(), outbox.clone(), notification_sender.clone()),
         cluster::gap_handler(resync_sender.clone()),
     );
     let presence_store = Arc::new(PgPresenceStore::new(pool.clone(), instance_id));
@@ -151,6 +153,10 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     .with_social(Arc::new(SocialService::new(Arc::new(
         PgSocialRepository::new(pool.clone()),
     ))))
+    .with_notifications(Arc::new(NotificationService::new(Arc::new(
+        PgNotificationRepository::new(pool.clone()),
+    ))))
+    .with_notification_events(notification_sender)
     // General API budgets are per server process (in memory, bounded); the stricter
     // authentication limits above are shared through PostgreSQL.
     .with_cluster(bus.clone(), presence_store.clone(), resync_sender)

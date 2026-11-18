@@ -83,6 +83,9 @@ kbd { padding: 2px 5px; border: 1px solid #e2e5e7; border-radius: 4px; backgroun
 .community-area { padding: 2px 8px 10px; border-bottom: 1px solid #eef0f1; }
 .section-heading { min-height: 27px; display: flex; align-items: center; gap: 4px; padding: 3px 6px; color: var(--muted); font: 8px ui-monospace, 'Cascadia Code', 'SFMono-Regular', monospace; letter-spacing: .1em; }
 .people-entry { width: 100%; min-height: 36px; margin: 5px 0 12px; padding: 0 10px; display: flex; align-items: center; gap: 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); text-align: left; cursor: pointer; }
+.notification-entry { width: 100%; min-height: 36px; margin: 7px 0 0; padding: 0 10px; display: flex; align-items: center; gap: 9px; border: 0; border-radius: 6px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.notification-entry:hover { background: var(--subtle); }
+.notification-count { min-width: 20px; height: 20px; margin-left: auto; padding: 0 5px; display: grid; place-items: center; border-radius: 10px; background: var(--accent); color: white; font: 10px ui-monospace, monospace; }
 .people-entry:hover { background: var(--subtle); }
 .people-dialog { width: min(100%, 560px); max-height: min(88vh, 760px); overflow: auto; }
 .people-add { display: flex; gap: 8px; margin-top: 18px; }
@@ -102,6 +105,17 @@ kbd { padding: 2px 5px; border: 1px solid #e2e5e7; border-radius: 4px; backgroun
 .people-row button { font-size: 11px; }
 .people-notice { margin: 8px 0; color: var(--accent); font-size: 12px; }
 @media (max-width: 540px) { .people-lists { grid-template-columns: 1fr; } .people-add { flex-wrap: wrap; } .people-add input { flex-basis: 100%; } }
+.notification-dialog { width: min(100%, 540px); max-height: min(88vh, 700px); overflow: auto; }
+.notification-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.notification-heading h2 { margin-bottom: 14px; }
+.notification-list { margin-top: 8px; }
+.notification-row { width: 100%; min-height: 68px; padding: 12px 8px; display: flex; align-items: flex-start; gap: 12px; border: 0; border-top: 1px solid var(--line); background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.notification-row:hover { background: var(--subtle); }
+.notification-dot { width: 7px; height: 7px; margin-top: 6px; flex: 0 0 7px; border-radius: 50%; background: transparent; }
+.notification-row.unread .notification-dot { background: var(--accent); }
+.notification-copy { display: block; font-size: 13px; }
+.notification-copy time { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; }
+.notification-empty { margin: 18px 0 4px; color: var(--muted); font-size: 13px; }
 .section-heading > span { flex: 1; }
 .section-heading button { width: 20px; height: 20px; border: 0; border-radius: 4px; background: transparent; color: #8c969d; font: 14px 'Segoe UI', sans-serif; cursor: pointer; }
 .section-heading .join-community-button { width: auto; padding-inline: 4px; color: var(--muted); font-size: 10px; }

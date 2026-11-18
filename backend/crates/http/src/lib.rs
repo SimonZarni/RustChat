@@ -9,6 +9,7 @@ mod communities;
 mod conversations;
 mod error;
 mod messages;
+mod notifications;
 mod presence;
 mod realtime;
 mod social;
@@ -78,6 +79,7 @@ pub struct AppState {
     pub(crate) messages: Arc<MessageService>,
     pub(crate) attachments: Option<Arc<rustchat_application::attachments::AttachmentService>>,
     pub(crate) social: Option<Arc<rustchat_application::social::SocialService>>,
+    pub(crate) notifications: Option<Arc<rustchat_application::notifications::NotificationService>>,
     pub(crate) communities: Arc<rustchat_application::communities::CommunityService>,
     pub(crate) events: broadcast::Sender<Message>,
     pub(crate) typing_events: broadcast::Sender<TypingEvent>,
@@ -86,6 +88,7 @@ pub struct AppState {
     pub(crate) delivery_cursor_events: broadcast::Sender<DeliveryCursorEvent>,
     pub(crate) presence_events: broadcast::Sender<PresenceEvent>,
     pub(crate) community_events: broadcast::Sender<CommunityEvent>,
+    pub(crate) notification_events: broadcast::Sender<NotificationEvent>,
     pub(crate) presence: Arc<presence::PresenceTracker>,
     /// Hands realtime events to the other server instances (a no-op when there is one).
     pub(crate) bus: Arc<dyn rustchat_application::ports::EventBus>,
@@ -123,6 +126,7 @@ impl AppState {
             messages,
             attachments: None,
             social: None,
+            notifications: None,
             communities,
             events: events.messages,
             typing_events: events.typing,
@@ -131,6 +135,7 @@ impl AppState {
             delivery_cursor_events: events.delivery_cursors,
             presence_events: events.presence,
             community_events: events.community,
+            notification_events: broadcast::channel(512).0,
             presence: Arc::new(presence::PresenceTracker::default()),
             bus: Arc::new(rustchat_application::ports::NoEventBus),
             resync_events: broadcast::channel(16).0,
@@ -198,6 +203,11 @@ impl AppState {
         let _ = self.community_events.send(event);
     }
 
+    pub(crate) fn publish_notification(&self, event: NotificationEvent) {
+        self.share(cluster::TOPIC_NOTIFICATION, &event);
+        let _ = self.notification_events.send(event);
+    }
+
     /// Enforce per-user and unauthenticated request budgets on authenticated routes.
     pub fn with_api_rate_limiter(
         mut self,
@@ -217,6 +227,22 @@ impl AppState {
 
     pub fn with_social(mut self, social: Arc<rustchat_application::social::SocialService>) -> Self {
         self.social = Some(social);
+        self
+    }
+
+    pub fn with_notifications(
+        mut self,
+        notifications: Arc<rustchat_application::notifications::NotificationService>,
+    ) -> Self {
+        self.notifications = Some(notifications);
+        self
+    }
+
+    pub fn with_notification_events(
+        mut self,
+        events: broadcast::Sender<NotificationEvent>,
+    ) -> Self {
+        self.notification_events = events;
         self
     }
 
@@ -287,6 +313,15 @@ pub struct CommunityEvent {
     pub occurred_at: time::OffsetDateTime,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NotificationEvent {
+    pub event_id: Uuid,
+    pub recipient_id: Uuid,
+    pub kind: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub occurred_at: time::OffsetDateTime,
+}
+
 pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/admin/users", get(admin::list_users))
@@ -300,6 +335,12 @@ pub fn router(state: AppState) -> Router {
             post(conversations::create).get(conversations::list),
         )
         .route("/friends", get(social::friends))
+        .route("/notifications", get(notifications::inbox))
+        .route("/notifications/read-all", put(notifications::mark_all_read))
+        .route(
+            "/notifications/{notification_id}/read",
+            put(notifications::mark_read),
+        )
         .route(
             "/friend-requests",
             get(social::requests).post(social::send_request),

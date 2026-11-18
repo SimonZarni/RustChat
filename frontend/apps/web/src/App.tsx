@@ -8,6 +8,8 @@ import { useCommunities } from './features/communities/useCommunities'
 import { ConversationList } from './features/conversations/ConversationList'
 import { NewConversationDialog } from './features/conversations/NewConversationDialog'
 import { PeopleDialog } from './features/social/PeopleDialog'
+import { NotificationDialog } from './features/notifications/NotificationDialog'
+import { useNotifications } from './features/notifications/useNotifications'
 import { ChatPanel } from './features/messages/ChatPanel'
 import { useConversation } from './features/messages/useConversation'
 import { useRealtime } from './features/realtime/useRealtime'
@@ -33,12 +35,15 @@ function Shell() {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [showNewConversation, setShowNewConversation] = useState(false)
   const [showPeople, setShowPeople] = useState(false)
+  const [showNotifications, setShowNotifications] = useState(false)
   const [mobileList, setMobileList] = useState(true)
   const socketRef = useRef<WebSocket | null>(null)
 
   const communities = useCommunities(user, setError)
-  const conversation = useConversation(activeId, socketRef, setError)
-  const realtime = useRealtime({ user, activeId, socketRef, conversation, communities })
+  const notifications = useNotifications(user, setError)
+  const refreshNotifications = useCallback(() => { void notifications.refresh().catch(() => {}) }, [notifications.refresh])
+  const conversation = useConversation(activeId, socketRef, setError, refreshNotifications)
+  const realtime = useRealtime({ user, activeId, socketRef, conversation, communities, onNotification: refreshNotifications })
 
   const openConversation = useCallback((conversationId: string) => {
     setActiveId(conversationId)
@@ -131,6 +136,7 @@ function Shell() {
           <button className="new-button" onClick={() => setShowNewConversation(true)} aria-label="New conversation" title="New conversation">+</button>
         </header>
         <div className="sidebar-search"><span aria-hidden="true">⌕</span><span>Conversations</span><kbd>{conversationShortcut}</kbd></div>
+        <button className="notification-entry" aria-label={notifications.unreadCount ? `Notifications, ${notifications.unreadCount} unread` : 'Notifications'} onClick={() => setShowNotifications(true)}><span aria-hidden="true">♧</span><span>Notifications</span>{notifications.unreadCount > 0 && <span className="notification-count">{notifications.unreadCount > 99 ? '99+' : notifications.unreadCount}</span>}</button>
         <button className="people-entry" onClick={() => setShowPeople(true)}><span aria-hidden="true">◎</span> Friends &amp; blocked</button>
         <CommunitySection
           state={communities} user={user} activeId={activeId} onOpenConversation={openConversation}
@@ -161,6 +167,12 @@ function Shell() {
         />
       )}
       {showPeople && <PeopleDialog onClose={() => setShowPeople(false)} onError={setError} />}
+      {showNotifications && <NotificationDialog
+        items={notifications.items} unreadCount={notifications.unreadCount} onClose={() => setShowNotifications(false)}
+        onRead={async (id) => { try { await notifications.markRead(id) } catch (cause) { setError(errorMessage(cause, 'Could not update notification')) } }}
+        onReadAll={async () => { try { await notifications.markAllRead() } catch (cause) { setError(errorMessage(cause, 'Could not update notifications')) } }}
+        onOpenConversation={openConversation} onOpenFriends={() => setShowPeople(true)}
+      />}
     </main>
   )
 }

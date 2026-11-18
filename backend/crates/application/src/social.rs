@@ -31,7 +31,7 @@ impl SocialService {
     pub async fn blocks(&self, user: UserId) -> Result<Vec<SocialUser>, AppError> {
         self.repository.blocks(user).await
     }
-    pub async fn send(&self, user: UserId, username: &str) -> Result<Uuid, AppError> {
+    pub async fn send(&self, user: UserId, username: &str) -> Result<(Uuid, UserId), AppError> {
         self.repository
             .send_request(user, &Username::parse(username)?)
             .await

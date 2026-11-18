@@ -374,6 +374,41 @@ pub async fn send(
             attachments,
         )
         .await?;
+    if let Ok(conversation) = state.conversations.get(auth.user.id, conversation_id).await {
+        if matches!(
+            conversation.kind,
+            rustchat_domain::conversation::ConversationKind::Direct
+        ) {
+            if let Some(recipient) = conversation
+                .members
+                .into_iter()
+                .find(|member| *member != auth.user.id)
+            {
+                state.publish_notification(crate::NotificationEvent {
+                    event_id: message.id.as_uuid(),
+                    recipient_id: recipient.as_uuid(),
+                    kind: "direct_message".to_owned(),
+                    occurred_at: message.created_at,
+                });
+            }
+        }
+    }
+    for recipient in &message.mentioned_user_ids {
+        if *recipient != auth.user.id
+            && state
+                .conversations
+                .share_conversation(auth.user.id, *recipient)
+                .await
+                .unwrap_or(false)
+        {
+            state.publish_notification(crate::NotificationEvent {
+                event_id: message.id.as_uuid(),
+                recipient_id: recipient.as_uuid(),
+                kind: "mention".to_owned(),
+                occurred_at: message.created_at,
+            });
+        }
+    }
     let mut message_dto = MessageDto::from(message.clone());
     if let Some(attachments) = &state.attachments {
         message_dto.attachments = attachments
