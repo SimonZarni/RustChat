@@ -546,7 +546,7 @@ Requirements:
 
 Mobile push notifications are deferred until mobile clients are planned.
 
-**Implementation status:** The in-app inbox supports persistent notifications for direct messages, @mentions, friend requests, and owner-facing community member-join/channel-create events; unread counts, per-item and bulk read state, realtime refresh hints, and per-conversation/channel message and mention toggles with permanent or timed mutes. Browser alerts are opt-in while the app is open in a hidden tab; DND schedules suppress them. Native background delivery remains planned.
+**Implementation status:** The in-app inbox supports persistent notifications for direct messages, @mentions, friend requests, and community member/channel events with per-community category controls; unread counts, per-item and bulk read state, realtime refresh hints, and per-conversation/channel message and mention toggles with permanent or timed mutes. Browser Notification API alerts work while the app is open, and configured Web Push can alert with the app closed. DND schedules suppress both modes.
 
 ### 4.14 Moderation and safety
 

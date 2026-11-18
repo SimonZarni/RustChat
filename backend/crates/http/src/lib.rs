@@ -31,7 +31,7 @@ use axum::{
 };
 use futures_util::future::BoxFuture;
 use rustchat_application::{auth::AuthService, error::AppError, messages::MessageService};
-use rustchat_domain::message::Message;
+use rustchat_domain::{identity::UserId, message::Message};
 use serde::Serialize;
 use tokio::sync::broadcast;
 
@@ -205,6 +205,16 @@ impl AppState {
 
     pub(crate) fn publish_notification(&self, event: NotificationEvent) {
         self.share(cluster::TOPIC_NOTIFICATION, &event);
+        if let Some(notifications) = self.notifications.clone() {
+            let user = UserId::from_uuid(event.recipient_id);
+            let kind = event.kind.clone();
+            let source = event.event_id;
+            tokio::spawn(async move {
+                if let Err(error) = notifications.dispatch_push(user, &kind, source).await {
+                    tracing::warn!(%error, "could not dispatch web push notification");
+                }
+            });
+        }
         let _ = self.notification_events.send(event);
     }
 
@@ -337,8 +347,24 @@ pub fn router(state: AppState) -> Router {
         .route("/friends", get(social::friends))
         .route("/notifications", get(notifications::inbox))
         .route(
+            "/notifications/push-config",
+            get(notifications::push_config),
+        )
+        .route(
+            "/notifications/push-subscriptions",
+            post(notifications::save_push_subscription),
+        )
+        .route(
+            "/notifications/push-subscriptions/{id}",
+            delete(notifications::delete_push_subscription),
+        )
+        .route(
             "/notifications/dnd-schedule",
             get(notifications::dnd_schedule).put(notifications::set_dnd_schedule),
+        )
+        .route(
+            "/communities/{community_id}/notification-preferences",
+            get(notifications::community_preferences).put(notifications::set_community_preferences),
         )
         .route("/notifications/read-all", put(notifications::mark_all_read))
         .route(

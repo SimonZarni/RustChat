@@ -10,7 +10,7 @@ export type Notification = {
   conversation_id: string | null
   message_id: string | null
   community_id: string | null
-  event_type: 'member_joined' | 'channel_created' | null
+  event_type: 'member_joined' | 'member_left' | 'member_removed' | 'channel_created' | 'channel_updated' | 'channel_deleted' | null
   created_at: string
   read_at: string | null
 }

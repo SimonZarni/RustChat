@@ -9,11 +9,11 @@ use rustchat_application::{
     error::AppError,
     ports::{
         ActiveSession, AdminUser, AttachmentRepository, AuditEvent, AuditPage, AuditUser,
-        CommunityRepository, ConversationNotificationPreferences, ConversationRepository,
-        CreateUserOutcome, DndSchedule, EmailStatus, EncryptedSecret, FriendRequest,
-        MessageRepository, MfaRepository, NewSession, NewUser, NotificationRecord,
+        CommunityNotificationPreferences, CommunityRepository, ConversationNotificationPreferences,
+        ConversationRepository, CreateUserOutcome, DndSchedule, EmailStatus, EncryptedSecret,
+        FriendRequest, MessageRepository, MfaRepository, NewSession, NewUser, NotificationRecord,
         NotificationRepository, SessionRepository, SocialRepository, SocialUser, TokenDigest,
-        TotpRecord, UserCredentials, UserRepository, VerifyEmailOutcome,
+        TotpRecord, UserCredentials, UserRepository, VerifyEmailOutcome, WebPushSubscription,
     },
 };
 use rustchat_domain::{
@@ -531,10 +531,131 @@ impl NotificationRepository for PgNotificationRepository {
         actor: UserId,
         event_type: &str,
         source: Uuid,
-    ) -> Result<Option<UserId>, AppError> {
-        let recipient: Option<Uuid> = sqlx::query_scalar("INSERT INTO notifications(id,recipient_id,actor_id,kind,source_id,community_id,event_type,created_at) SELECT $1,c.owner_id,$2,'community_event',$3,c.id,$4,now() FROM communities c JOIN community_members cm ON cm.community_id=c.id AND cm.user_id=$2 WHERE c.id=$5 AND c.owner_id<>$2 ON CONFLICT DO NOTHING RETURNING recipient_id")
-            .bind(Uuid::now_v7()).bind(actor.as_uuid()).bind(source).bind(event_type).bind(community.as_uuid()).fetch_optional(&self.pool).await.map_err(db_error)?;
-        Ok(recipient.map(UserId::from_uuid))
+    ) -> Result<Vec<(UserId, Uuid)>, AppError> {
+        let rows = sqlx::query("INSERT INTO notifications(id,recipient_id,actor_id,kind,source_id,community_id,event_type,created_at) SELECT gen_random_uuid(),target.user_id,$1,'community_event',$2,$3,$4,now() FROM community_members target LEFT JOIN community_notification_preferences pref ON pref.user_id=target.user_id AND pref.community_id=target.community_id WHERE target.community_id=$3 AND target.user_id<>$1 AND CASE WHEN $4 IN ('member_joined','member_left','member_removed') THEN COALESCE(pref.member_events_enabled,true) ELSE COALESCE(pref.channel_events_enabled,true) END ON CONFLICT DO NOTHING RETURNING recipient_id,source_id")
+            .bind(actor.as_uuid()).bind(source).bind(community.as_uuid()).bind(event_type).fetch_all(&self.pool).await.map_err(db_error)?;
+        rows.into_iter()
+            .map(|row| {
+                Ok((
+                    UserId::from_uuid(row.try_get("recipient_id").map_err(db_error)?),
+                    row.try_get("source_id").map_err(db_error)?,
+                ))
+            })
+            .collect()
+    }
+    async fn community_preferences(
+        &self,
+        user: UserId,
+        community: rustchat_domain::identity::CommunityId,
+    ) -> Result<CommunityNotificationPreferences, AppError> {
+        let is_member: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM community_members WHERE user_id=$1 AND community_id=$2)",
+        )
+        .bind(user.as_uuid())
+        .bind(community.as_uuid())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db_error)?;
+        if !is_member {
+            return Err(AppError::NotFound);
+        }
+        let row = sqlx::query("SELECT member_events_enabled,channel_events_enabled FROM community_notification_preferences WHERE user_id=$1 AND community_id=$2").bind(user.as_uuid()).bind(community.as_uuid()).fetch_optional(&self.pool).await.map_err(db_error)?;
+        let (member_events_enabled, channel_events_enabled) = if let Some(row) = row {
+            (
+                row.try_get("member_events_enabled").map_err(db_error)?,
+                row.try_get("channel_events_enabled").map_err(db_error)?,
+            )
+        } else {
+            (true, true)
+        };
+        Ok(CommunityNotificationPreferences {
+            community_id: community.as_uuid(),
+            member_events_enabled,
+            channel_events_enabled,
+        })
+    }
+    async fn set_community_preferences(
+        &self,
+        user: UserId,
+        community: rustchat_domain::identity::CommunityId,
+        member_events_enabled: bool,
+        channel_events_enabled: bool,
+    ) -> Result<CommunityNotificationPreferences, AppError> {
+        let result = sqlx::query("INSERT INTO community_notification_preferences(user_id,community_id,member_events_enabled,channel_events_enabled,updated_at) SELECT $1,$2,$3,$4,now() WHERE EXISTS(SELECT 1 FROM community_members WHERE user_id=$1 AND community_id=$2) ON CONFLICT(user_id,community_id) DO UPDATE SET member_events_enabled=EXCLUDED.member_events_enabled,channel_events_enabled=EXCLUDED.channel_events_enabled,updated_at=now()")
+            .bind(user.as_uuid()).bind(community.as_uuid()).bind(member_events_enabled).bind(channel_events_enabled).execute(&self.pool).await.map_err(db_error)?;
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound);
+        }
+        self.community_preferences(user, community).await
+    }
+    async fn save_push_subscription(
+        &self,
+        user: UserId,
+        endpoint: &str,
+        p256dh: &str,
+        auth_secret: &str,
+    ) -> Result<Uuid, AppError> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM web_push_subscriptions WHERE user_id=$1 AND endpoint<>$2",
+        )
+        .bind(user.as_uuid())
+        .bind(endpoint)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db_error)?;
+        if count >= 10 {
+            return Err(AppError::WebPushSubscriptionLimit);
+        }
+        let id = Uuid::now_v7();
+        let saved = sqlx::query_scalar::<_,Uuid>("INSERT INTO web_push_subscriptions(id,user_id,endpoint,p256dh,auth_secret) VALUES($1,$2,$3,$4,$5) ON CONFLICT(endpoint) DO UPDATE SET p256dh=EXCLUDED.p256dh,auth_secret=EXCLUDED.auth_secret,updated_at=now() WHERE web_push_subscriptions.user_id=EXCLUDED.user_id RETURNING id")
+            .bind(id).bind(user.as_uuid()).bind(endpoint).bind(p256dh).bind(auth_secret).fetch_optional(&self.pool).await.map_err(db_error)?;
+        saved.ok_or(AppError::SocialConflict)
+    }
+    async fn delete_push_subscription(
+        &self,
+        user: UserId,
+        subscription: Uuid,
+    ) -> Result<(), AppError> {
+        let result = sqlx::query("DELETE FROM web_push_subscriptions WHERE id=$1 AND user_id=$2")
+            .bind(subscription)
+            .bind(user.as_uuid())
+            .execute(&self.pool)
+            .await
+            .map_err(db_error)?;
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound);
+        }
+        Ok(())
+    }
+    async fn push_subscriptions(&self, user: UserId) -> Result<Vec<WebPushSubscription>, AppError> {
+        let rows = sqlx::query(
+            "SELECT id,endpoint,p256dh,auth_secret FROM web_push_subscriptions WHERE user_id=$1",
+        )
+        .bind(user.as_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_error)?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(WebPushSubscription {
+                    id: row.try_get("id").map_err(db_error)?,
+                    endpoint: row.try_get("endpoint").map_err(db_error)?,
+                    p256dh: row.try_get("p256dh").map_err(db_error)?,
+                    auth_secret: row.try_get("auth_secret").map_err(db_error)?,
+                })
+            })
+            .collect()
+    }
+    async fn is_in_dnd_schedule(&self, user: UserId) -> Result<bool, AppError> {
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_notification_dnd_schedules s CROSS JOIN LATERAL (SELECT now() AT TIME ZONE s.timezone AS local_now) l WHERE s.user_id=$1 AND s.enabled AND ((s.start_time::time < s.end_time::time AND extract(isodow FROM l.local_now)::int=ANY(s.weekdays) AND l.local_now::time>=s.start_time::time AND l.local_now::time<s.end_time::time) OR (s.start_time::time > s.end_time::time AND ((extract(isodow FROM l.local_now)::int=ANY(s.weekdays) AND l.local_now::time>=s.start_time::time) OR (((extract(isodow FROM l.local_now)::int+5)%7+1)=ANY(s.weekdays) AND l.local_now::time<s.end_time::time)))))").bind(user.as_uuid()).fetch_one(&self.pool).await.map_err(db_error)
+    }
+    async fn notification_exists(
+        &self,
+        user: UserId,
+        kind: &str,
+        source: Uuid,
+    ) -> Result<bool, AppError> {
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM notifications WHERE recipient_id=$1 AND kind=$2 AND source_id=$3)").bind(user.as_uuid()).bind(kind).bind(source).fetch_one(&self.pool).await.map_err(db_error)
     }
 }
 

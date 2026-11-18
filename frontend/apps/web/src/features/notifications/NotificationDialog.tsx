@@ -14,7 +14,7 @@ export function NotificationDialog({
       {items.length === 0 ? <p className="notification-empty">You’re all caught up.</p> : <div className="notification-list">
         {items.map((item) => {
           const actor = item.actor_username ? `@${item.actor_username}` : 'Someone'
-          const description = item.kind === 'direct_message' ? 'sent you a message' : item.kind === 'mention' ? 'mentioned you' : item.kind === 'friend_request' ? 'sent you a friend request' : item.event_type === 'member_joined' ? 'joined your community' : 'created a channel'
+          const description = item.kind === 'direct_message' ? 'sent you a message' : item.kind === 'mention' ? 'mentioned you' : item.kind === 'friend_request' ? 'sent you a friend request' : item.event_type === 'member_joined' ? 'joined your community' : item.event_type === 'member_left' ? 'left your community' : item.event_type === 'member_removed' ? 'removed a community member' : item.event_type === 'channel_created' ? 'created a channel' : item.event_type === 'channel_updated' ? 'updated a channel' : 'deleted a channel'
           return <button className={`notification-row ${item.read_at ? '' : 'unread'}`} key={item.id} onClick={() => {
             void onRead(item.id)
             if (item.conversation_id) { onClose(); onOpenConversation(item.conversation_id) }

@@ -122,6 +122,7 @@ kbd { padding: 2px 5px; border: 1px solid #e2e5e7; border-radius: 4px; backgroun
 .dnd-fields input { min-height: 38px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; }
 .dnd-days { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
 .dnd-days label { display: flex; gap: 4px; align-items: center; font-size: 12px; }
+.notification-action-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .notification-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .notification-heading h2 { margin-bottom: 14px; }
 .notification-list { margin-top: 8px; }

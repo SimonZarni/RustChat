@@ -7,6 +7,7 @@ pub mod mfa;
 pub mod postgres;
 pub mod ratelimit;
 pub mod security;
+pub mod web_push;
 
 /// Embedded versioned migrations (`backend/migrations`). Keep this module
 /// source updated when adding migrations so the compile-time embed refreshes.

@@ -32,12 +32,12 @@ async fn publish_community_notification(
     event_type: &'static str,
 ) -> Result<(), ApiError> {
     if let Some(service) = state.notifications.as_deref() {
-        if let Some(recipient) = service
+        for (recipient, source) in service
             .community_event(community_id, actor, event_type)
             .await?
         {
             state.publish_notification(crate::NotificationEvent {
-                event_id: Uuid::now_v7(),
+                event_id: source,
                 recipient_id: recipient.as_uuid(),
                 kind: "community_event".to_owned(),
                 occurred_at: time::OffsetDateTime::now_utc(),
@@ -412,6 +412,7 @@ pub async fn leave(
 ) -> Result<StatusCode, ApiError> {
     let community = community_id(&raw)?;
     state.communities.leave(auth.user.id, community).await?;
+    publish_community_notification(&state, community, auth.user.id, "member_left").await?;
     publish_community_event(&state, community, "members.updated");
     Ok(StatusCode::NO_CONTENT)
 }
@@ -429,6 +430,7 @@ pub async fn remove_member(
         .communities
         .remove_member(auth.user.id, community, member)
         .await?;
+    publish_community_notification(&state, community, auth.user.id, "member_removed").await?;
     publish_community_event(&state, community, "members.updated");
     Ok(StatusCode::NO_CONTENT)
 }
@@ -686,6 +688,13 @@ pub async fn update_channel(
             body.position,
         )
         .await?;
+    publish_community_notification(
+        &state,
+        channel.community_id,
+        auth.user.id,
+        "channel_updated",
+    )
+    .await?;
     publish_community_event(&state, channel.community_id, "channels.updated");
     Ok(Json(ChannelEnvelope {
         channel: channel.into(),
@@ -702,6 +711,7 @@ pub async fn delete_channel(
         .map_err(|_| ApiError::BadRequest(StatusCode::BAD_REQUEST))?;
     let community = community_id(&raw_community)?;
     state.communities.delete_channel(auth.user.id, id).await?;
+    publish_community_notification(&state, community, auth.user.id, "channel_deleted").await?;
     publish_community_event(&state, community, "channels.updated");
     Ok(StatusCode::NO_CONTENT)
 }

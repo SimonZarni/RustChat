@@ -128,6 +128,16 @@ impl IntoResponse for ApiError {
                     "INVALID_NOTIFICATION_PREFERENCES",
                     "Notification preferences are invalid.",
                 ),
+                AppError::WebPushUnavailable => body(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "WEB_PUSH_UNAVAILABLE",
+                    "Background notifications are not configured on this server.",
+                ),
+                AppError::WebPushSubscriptionLimit => body(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "WEB_PUSH_SUBSCRIPTION_LIMIT",
+                    "This account has reached its device notification limit.",
+                ),
                 AppError::CommunityOwnerCannotLeave => body(
                     StatusCode::CONFLICT,
                     "COMMUNITY_OWNER_CANNOT_LEAVE",

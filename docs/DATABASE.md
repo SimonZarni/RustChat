@@ -46,7 +46,7 @@ This is the original planning inventory, not the implemented schema; see **Imple
 
 ### Implemented schema
 
-The implemented tables are described below (`backend/migrations/0001_identity.sql` through `0032_community_event_notifications.sql`). Authentication rate-limit keys are SHA-256 digests with expiry and are shared by server instances using this database. Instance administration adds nullable account suspension timestamps and `instance_admin_audit_log`, retaining suspension and restoration actions with actor and target references. Basic profiles include an editable display name and bio. Attachments store metadata and opaque object keys in PostgreSQL; file bytes live in the configured S3-compatible store. Social relationships are stored in `friend_requests`, canonical `friendships`, and directional `user_blocks`.
+The implemented tables are described below (`backend/migrations/0001_identity.sql` through `0034_web_push_subscriptions.sql`). Authentication rate-limit keys are SHA-256 digests with expiry and are shared by server instances using this database. Instance administration adds nullable account suspension timestamps and `instance_admin_audit_log`, retaining suspension and restoration actions with actor and target references. Basic profiles include an editable display name and bio. Attachments store metadata and opaque object keys in PostgreSQL; file bytes live in the configured S3-compatible store. Social relationships are stored in `friend_requests`, canonical `friendships`, and directional `user_blocks`.
 
 **`users`**
 
@@ -89,7 +89,7 @@ Account deletion is a logical tombstone. User identity fields are replaced, prof
 
 **`conversations` and `conversation_members`**
 
-`conversations` stores a `kind` (`direct` or `group`), an optional group `name` (a check constraint allows it only on groups and requires 1-80 characters, no surrounding whitespace and no control characters), creator, creation time, and nullable canonical `direct_user_low` / `direct_user_high` IDs. A check constraint requires ordered, non-null user IDs for direct conversations and null pair columns for groups. The unique pair constraint makes direct creation idempotent under concurrent requests. `conversation_members` stores the membership relation with `(conversation_id, user_id)` as its primary key and cascading foreign keys. An index beginning with `user_id` supports a member's conversation list. Group size is enforced transactionally by the application under a row lock; the configured limit defaults to 100 and is bounded to 2â€“500.
+`conversations` stores a `kind` (`direct` or `group`), an optional group `name` (a check constraint allows it only on groups and requires 1-80 characters, no surrounding whitespace and no control characters), creator, creation time, and nullable canonical `direct_user_low` / `direct_user_high` IDs. A check constraint requires ordered, non-null user IDs for direct conversations and null pair columns for groups. The unique pair constraint makes direct creation idempotent under concurrent requests. `conversation_members` stores the membership relation with `(conversation_id, user_id)` as its primary key and cascading foreign keys. An index beginning with `user_id` supports a member's conversation list. Group size is enforced transactionally by the application under a row lock; the configured limit defaults to 100 and is bounded to 2ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“500.
 
 `conversations.last_sequence` is the last allocated message sequence, starting at zero. Each send locks the conversation row, checks membership and idempotency, increments this counter, then inserts the message and outbox event in the same transaction.
 
@@ -123,7 +123,11 @@ Messages may reference a parent message for replies. The composite foreign key b
 
 **`user_notification_dnd_schedules`** (migration `0031_notification_dnd_schedules.sql`) stores optional local quiet hours, an IANA timezone, and ISO weekday selection for each user.
 
-Community event notifications store a community and constrained event type (`member_joined` or `channel_created`); they notify the owner when another member joins or creates a channel.
+**`community_notification_preferences`** (migration `0033_community_notification_preferences.sql`) stores each member's toggles for member events and channel events. Missing rows default to enabled.
+
+**`web_push_subscriptions`** (migration `0034_web_push_subscriptions.sql`) stores private push-service endpoints and browser encryption keys for authenticated devices. The API never returns these values; entries are owner-scoped and capped at ten per account.
+
+Community event notifications store a community and constrained event type (`member_joined` or `channel_created`); they are created for enabled current members other than the event actor.
 
 ## 5. Relationships (conceptual)
 

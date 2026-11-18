@@ -4,6 +4,7 @@ use axum::{
     http::StatusCode,
 };
 use rustchat_application::error::AppError;
+use rustchat_domain::identity::CommunityId;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -26,6 +27,35 @@ pub struct DndScheduleBody {
     end_time: String,
     timezone: String,
     weekdays: Vec<i16>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommunityPreferencesBody {
+    member_events_enabled: bool,
+    channel_events_enabled: bool,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PushSubscriptionBody {
+    endpoint: String,
+    #[serde(default, rename = "expirationTime")]
+    expiration_time: Option<serde_json::Value>,
+    keys: PushSubscriptionKeys,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PushSubscriptionKeys {
+    p256dh: String,
+    auth: String,
+}
+#[derive(Serialize)]
+pub struct PushConfigEnvelope {
+    enabled: bool,
+    public_key: Option<String>,
+}
+#[derive(Serialize)]
+pub struct PushSubscriptionEnvelope {
+    id: Uuid,
 }
 fn service(
     s: &AppState,
@@ -91,4 +121,78 @@ pub async fn set_dnd_schedule(
             )
             .await?,
     ))
+}
+
+pub async fn community_preferences(
+    State(s): State<AppState>,
+    AuthUser(a): AuthUser,
+    Path(raw): Path<String>,
+) -> Result<Json<rustchat_application::ports::CommunityNotificationPreferences>, ApiError> {
+    let id = Uuid::parse_str(&raw)
+        .map(CommunityId::from_uuid)
+        .map_err(|_| ApiError::BadRequest(StatusCode::BAD_REQUEST))?;
+    Ok(Json(
+        service(&s)?.community_preferences(a.user.id, id).await?,
+    ))
+}
+
+pub async fn set_community_preferences(
+    State(s): State<AppState>,
+    AuthUser(a): AuthUser,
+    Path(raw): Path<String>,
+    crate::auth::ApiJson(body): crate::auth::ApiJson<CommunityPreferencesBody>,
+) -> Result<Json<rustchat_application::ports::CommunityNotificationPreferences>, ApiError> {
+    let id = Uuid::parse_str(&raw)
+        .map(CommunityId::from_uuid)
+        .map_err(|_| ApiError::BadRequest(StatusCode::BAD_REQUEST))?;
+    Ok(Json(
+        service(&s)?
+            .set_community_preferences(
+                a.user.id,
+                id,
+                body.member_events_enabled,
+                body.channel_events_enabled,
+            )
+            .await?,
+    ))
+}
+
+pub async fn push_config(
+    State(s): State<AppState>,
+    AuthUser(_): AuthUser,
+) -> Json<PushConfigEnvelope> {
+    let public_key = s
+        .notifications
+        .as_deref()
+        .and_then(|service| service.push_public_key());
+    Json(PushConfigEnvelope {
+        enabled: public_key.is_some(),
+        public_key,
+    })
+}
+
+pub async fn save_push_subscription(
+    State(s): State<AppState>,
+    AuthUser(a): AuthUser,
+    crate::auth::ApiJson(body): crate::auth::ApiJson<PushSubscriptionBody>,
+) -> Result<(StatusCode, Json<PushSubscriptionEnvelope>), ApiError> {
+    let id = service(&s)?
+        .save_push_subscription(
+            a.user.id,
+            &body.endpoint,
+            &body.keys.p256dh,
+            &body.keys.auth,
+        )
+        .await?;
+    let _ = body.expiration_time;
+    Ok((StatusCode::CREATED, Json(PushSubscriptionEnvelope { id })))
+}
+
+pub async fn delete_push_subscription(
+    State(s): State<AppState>,
+    AuthUser(a): AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    service(&s)?.delete_push_subscription(a.user.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }

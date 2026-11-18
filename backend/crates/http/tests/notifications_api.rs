@@ -2,6 +2,8 @@ mod common;
 
 use axum::http::{Method, StatusCode};
 use common::{Options, app, call, register, sign_in, sign_in_existing};
+use rustchat_application::ports::NotificationRepository;
+use rustchat_domain::identity::UserId;
 use rustchat_infrastructure::MIGRATOR;
 use serde_json::json;
 use sqlx::PgPool;
@@ -9,7 +11,7 @@ use uuid::Uuid;
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn friend_message_and_mention_notifications_persist_and_clear_on_read(pool: PgPool) {
-    let api = app(pool, Options::default());
+    let api = app(pool.clone(), Options::default());
     let alice = sign_in(&api, "notifyalice").await;
     register(&api, "notifybob").await;
     let bob = sign_in_existing(&api, "notifybob").await;
@@ -172,7 +174,7 @@ async fn conversation_preferences_mute_and_filter_notifications(pool: PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn dnd_schedule_persists_and_validates_timezone_and_weekdays(pool: PgPool) {
-    let api = app(pool, Options::default());
+    let api = app(pool.clone(), Options::default());
     let user = sign_in(&api, "dndalice").await;
     let path = "/api/v1/notifications/dnd-schedule";
     let defaults = call(&api, Method::GET, path, None, Some(&user)).await;
@@ -181,8 +183,34 @@ async fn dnd_schedule_persists_and_validates_timezone_and_weekdays(pool: PgPool)
     let saved = call(&api, Method::PUT, path, Some(json!({"enabled":true,"start_time":"22:00","end_time":"07:30","timezone":"Asia/Bangkok","weekdays":[1,2,3,4,5]})), Some(&user)).await;
     assert_eq!(saved.status, StatusCode::OK);
     assert_eq!(saved.json["timezone"], "Asia/Bangkok");
+    let me = call(&api, Method::GET, "/api/v1/auth/me", None, Some(&user)).await;
+    let id = Uuid::parse_str(me.json["user"]["id"].as_str().unwrap()).unwrap();
+    let repository = rustchat_infrastructure::postgres::PgNotificationRepository::new(pool.clone());
+    repository
+        .is_in_dnd_schedule(UserId::from_uuid(id))
+        .await
+        .unwrap();
     let invalid = call(&api, Method::PUT, path, Some(json!({"enabled":true,"start_time":"22:00","end_time":"07:30","timezone":"No/Such_Zone","weekdays":[1,2,3]})), Some(&user)).await;
     assert_eq!(invalid.status, StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn background_push_is_reported_unavailable_without_vapid_configuration(pool: PgPool) {
+    let api = app(pool, Options::default());
+    let user = sign_in(&api, "pushdisabled").await;
+    let config = call(
+        &api,
+        Method::GET,
+        "/api/v1/notifications/push-config",
+        None,
+        Some(&user),
+    )
+    .await;
+    assert_eq!(config.status, StatusCode::OK);
+    assert_eq!(config.json["enabled"], false);
+    assert_eq!(config.json["public_key"], serde_json::Value::Null);
+    let unavailable = call(&api, Method::POST, "/api/v1/notifications/push-subscriptions", Some(json!({"endpoint":"https://updates.push.services.mozilla.com/wpush/v2/abcdefgh","expirationTime":null,"keys":{"p256dh":"x","auth":"y"}})), Some(&user)).await;
+    assert_eq!(unavailable.status, StatusCode::SERVICE_UNAVAILABLE);
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
@@ -218,6 +246,29 @@ async fn community_member_join_creates_owner_notification(pool: PgPool) {
     )
     .await;
     assert_eq!(joined.status, StatusCode::OK);
+    let prefs_url = format!("/api/v1/communities/{community_id}/notification-preferences");
+    let defaults = call(&api, Method::GET, &prefs_url, None, Some(&member)).await;
+    assert_eq!(defaults.status, StatusCode::OK);
+    assert_eq!(defaults.json["member_events_enabled"], true);
+    let saved = call(
+        &api,
+        Method::PUT,
+        &prefs_url,
+        Some(json!({"member_events_enabled":false,"channel_events_enabled":false})),
+        Some(&member),
+    )
+    .await;
+    assert_eq!(saved.status, StatusCode::OK);
+    let second_member = sign_in(&api, "communitysecond").await;
+    let joined_second = call(
+        &api,
+        Method::POST,
+        "/api/v1/communities/join",
+        Some(json!({"invite_code":invite.json["invite_code"]})),
+        Some(&second_member),
+    )
+    .await;
+    assert_eq!(joined_second.status, StatusCode::OK);
     let inbox = call(
         &api,
         Method::GET,
@@ -226,11 +277,47 @@ async fn community_member_join_creates_owner_notification(pool: PgPool) {
         Some(&owner),
     )
     .await;
-    assert_eq!(inbox.json["unread_count"], 1);
+    assert_eq!(inbox.json["unread_count"], 2);
     assert_eq!(inbox.json["notifications"][0]["kind"], "community_event");
     assert_eq!(
         inbox.json["notifications"][0]["event_type"],
         "member_joined"
     );
     assert_eq!(inbox.json["notifications"][0]["community_id"], community_id);
+    let outsider = sign_in(&api, "communityoutsider").await;
+    let hidden = call(&api, Method::GET, &prefs_url, None, Some(&outsider)).await;
+    assert_eq!(hidden.status, StatusCode::NOT_FOUND);
+    let member_inbox = call(
+        &api,
+        Method::GET,
+        "/api/v1/notifications",
+        None,
+        Some(&member),
+    )
+    .await;
+    assert_eq!(
+        member_inbox.json["unread_count"], 0,
+        "muted community event categories must not create inbox items"
+    );
+    let channel = call(
+        &api,
+        Method::POST,
+        &format!("/api/v1/communities/{community_id}/channels"),
+        Some(json!({"name":"garden-chat"})),
+        Some(&owner),
+    )
+    .await;
+    assert_eq!(channel.status, StatusCode::CREATED);
+    let second_inbox = call(
+        &api,
+        Method::GET,
+        "/api/v1/notifications",
+        None,
+        Some(&second_member),
+    )
+    .await;
+    assert_eq!(
+        second_inbox.json["notifications"][0]["event_type"],
+        "channel_created"
+    );
 }

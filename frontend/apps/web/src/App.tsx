@@ -47,6 +47,11 @@ function Shell() {
   const conversation = useConversation(activeId, socketRef, setError, refreshNotifications)
   const realtime = useRealtime({ user, activeId, socketRef, conversation, communities, onNotification: refreshNotifications })
 
+  const notificationTargets = useMemo(() => [
+    ...conversations.map((item) => ({ id: item.id, label: item.kind === 'direct' ? item.members.filter((memberId) => memberId !== user?.id).map((memberId) => conversation.profiles[memberId]?.username).find(Boolean) ?? 'Direct message' : item.name ?? 'Group conversation' })),
+  ], [conversations, user?.id, conversation.profiles])
+  const notificationCommunities = useMemo(() => communities.communities.map(({ id, name }) => ({ id, name })), [communities.communities])
+
   const openConversation = useCallback((conversationId: string) => {
     setActiveId(conversationId)
     setMobileList(false)
@@ -112,10 +117,6 @@ function Shell() {
     ? activeConversation.members.filter((memberId) => memberId !== user.id).map((memberId) => conversation.profiles[memberId]?.username).find(Boolean)
     : undefined
   const title = activeChannel?.name ?? (activeConversation ? directPeerName ?? displayName(activeConversation, user.id) : 'Your messages')
-  const notificationTargets = useMemo(() => [
-    ...conversations.map((item) => ({ id: item.id, label: item.kind === 'direct' ? item.members.filter((memberId) => memberId !== user.id).map((memberId) => conversation.profiles[memberId]?.username).find(Boolean) ?? 'Direct message' : item.name ?? 'Group conversation' })),
-  ], [conversations, user.id, conversation.profiles])
-  const notificationCommunityIds = useMemo(() => communities.communities.map((item) => item.id), [communities.communities])
   const active = activeId && (activeConversation || activeChannel) ? {
     id: activeId,
     title,
@@ -183,7 +184,8 @@ function Shell() {
       />}
       {showNotificationPreferences && <NotificationPreferencesDialog
         targets={notificationTargets}
-        communityIds={notificationCommunityIds}
+        communities={notificationCommunities}
+        userId={user.id}
         onClose={() => setShowNotificationPreferences(false)} onError={setError}
       />}
     </main>

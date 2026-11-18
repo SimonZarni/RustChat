@@ -75,6 +75,10 @@ pub enum AppError {
     InvalidReadCursor,
     #[error("notification preference request is invalid")]
     InvalidNotificationPreferences,
+    #[error("web push is not configured")]
+    WebPushUnavailable,
+    #[error("web push subscription limit reached")]
+    WebPushSubscriptionLimit,
     #[error("delivery cursor cannot exceed the latest conversation sequence")]
     InvalidDeliveryCursor,
     #[error("reaction request is invalid")]

@@ -74,6 +74,10 @@ pub enum ConfigError {
     InvalidAttachmentMax,
     #[error("RUSTCHAT_ATTACHMENT_QUOTA_GIB must be between 1 and 100000")]
     InvalidAttachmentQuota,
+    #[error("Web Push VAPID public key, private key PEM, and subject must be configured together")]
+    IncompleteWebPushConfig,
+    #[error("Web Push VAPID key or subject is invalid")]
+    InvalidWebPushConfig,
 }
 
 /// A database URL. It usually embeds a password, so `Debug` is redacted.
@@ -123,8 +127,26 @@ pub struct Config {
     /// Present when an encryption key is configured, which enables TOTP enrolment.
     pub mfa: Option<MfaConfig>,
     pub object_storage: Option<ObjectStorageConfig>,
+    pub web_push: Option<WebPushConfig>,
     pub attachment_max_file_bytes: i64,
     pub attachment_quota_bytes: i64,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct WebPushConfig {
+    pub public_key: String,
+    pub private_key_pem: String,
+    pub subject: String,
+}
+
+impl fmt::Debug for WebPushConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WebPushConfig")
+            .field("public_key", &"<configured>")
+            .field("private_key_pem", &"<redacted>")
+            .field("subject", &self.subject)
+            .finish()
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -451,6 +473,42 @@ impl Config {
             })
         };
 
+        let vapid_public =
+            lookup("RUSTCHAT_WEB_PUSH_VAPID_PUBLIC_KEY").filter(|v| !v.trim().is_empty());
+        let vapid_private =
+            lookup("RUSTCHAT_WEB_PUSH_VAPID_PRIVATE_KEY_PEM").filter(|v| !v.trim().is_empty());
+        let vapid_subject = lookup("RUSTCHAT_WEB_PUSH_SUBJECT").filter(|v| !v.trim().is_empty());
+        let push_configured = [
+            vapid_public.is_some(),
+            vapid_private.is_some(),
+            vapid_subject.is_some(),
+        ];
+        let web_push = if push_configured.iter().all(|v| !v) {
+            None
+        } else if push_configured.iter().any(|v| !v) {
+            return Err(ConfigError::IncompleteWebPushConfig);
+        } else {
+            let public_key = vapid_public.unwrap();
+            let private_key_pem = vapid_private.unwrap().replace("\\n", "\n");
+            let subject = vapid_subject.unwrap();
+            if public_key.len() < 80
+                || public_key.len() > 100
+                || !public_key
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                || !(private_key_pem.contains("-----BEGIN PRIVATE KEY-----")
+                    || private_key_pem.contains("-----BEGIN EC PRIVATE KEY-----"))
+                || !(subject.starts_with("mailto:") || subject.starts_with("https://"))
+            {
+                return Err(ConfigError::InvalidWebPushConfig);
+            }
+            Some(WebPushConfig {
+                public_key,
+                private_key_pem,
+                subject,
+            })
+        };
+
         let attachment_max_mib = lookup("RUSTCHAT_ATTACHMENT_MAX_MIB")
             .map(|raw| {
                 raw.parse::<u64>()
@@ -486,6 +544,7 @@ impl Config {
             email,
             mfa,
             object_storage,
+            web_push,
             attachment_max_file_bytes: i64::try_from(attachment_max_mib * 1024 * 1024)
                 .map_err(|_| ConfigError::InvalidAttachmentMax)?,
             attachment_quota_bytes: i64::try_from(attachment_quota_gib * 1024 * 1024 * 1024)

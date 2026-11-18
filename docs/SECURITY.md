@@ -108,6 +108,7 @@ Do not advertise RustChat as E2EE until the complete key lifecycle and relevant 
 - Minimize personal data in telemetry and error reporting.
 - Notification records and realtime hints omit message text; inbox reads are scoped to the recipient and notifications from blocked users are hidden.
 - Per-conversation notification settings are readable and writable only through the caller's current conversation/channel visibility; message and mention preferences are enforced in the message transaction and do not suppress message delivery.
+- Web Push subscriptions are owner-scoped, limited to ten per account, and accept only HTTPS endpoints from known browser push services to prevent using the server as an arbitrary URL fetcher. Subscription endpoints and encryption keys are never returned by the API; push content is generic and contains no message text.
 
 ## 12. Threats to test
 

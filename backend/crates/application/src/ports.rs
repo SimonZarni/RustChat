@@ -377,6 +377,31 @@ pub struct DndSchedule {
     pub weekdays: Vec<i16>,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CommunityNotificationPreferences {
+    pub community_id: uuid::Uuid,
+    pub member_events_enabled: bool,
+    pub channel_events_enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct WebPushSubscription {
+    pub id: uuid::Uuid,
+    pub endpoint: String,
+    pub p256dh: String,
+    pub auth_secret: String,
+}
+
+#[async_trait]
+pub trait WebPushDelivery: Send + Sync {
+    fn public_key(&self) -> String;
+    async fn send(
+        &self,
+        subscription: &WebPushSubscription,
+        payload: &str,
+    ) -> Result<bool, AppError>;
+}
+
 #[async_trait]
 pub trait NotificationRepository: Send + Sync {
     async fn list(&self, user: UserId, limit: usize) -> Result<Vec<NotificationRecord>, AppError>;
@@ -409,7 +434,39 @@ pub trait NotificationRepository: Send + Sync {
         actor: UserId,
         event_type: &str,
         source: uuid::Uuid,
-    ) -> Result<Option<UserId>, AppError>;
+    ) -> Result<Vec<(UserId, uuid::Uuid)>, AppError>;
+    async fn community_preferences(
+        &self,
+        user: UserId,
+        community: rustchat_domain::identity::CommunityId,
+    ) -> Result<CommunityNotificationPreferences, AppError>;
+    async fn set_community_preferences(
+        &self,
+        user: UserId,
+        community: rustchat_domain::identity::CommunityId,
+        member_events_enabled: bool,
+        channel_events_enabled: bool,
+    ) -> Result<CommunityNotificationPreferences, AppError>;
+    async fn save_push_subscription(
+        &self,
+        user: UserId,
+        endpoint: &str,
+        p256dh: &str,
+        auth_secret: &str,
+    ) -> Result<uuid::Uuid, AppError>;
+    async fn delete_push_subscription(
+        &self,
+        user: UserId,
+        subscription: uuid::Uuid,
+    ) -> Result<(), AppError>;
+    async fn push_subscriptions(&self, user: UserId) -> Result<Vec<WebPushSubscription>, AppError>;
+    async fn is_in_dnd_schedule(&self, user: UserId) -> Result<bool, AppError>;
+    async fn notification_exists(
+        &self,
+        user: UserId,
+        kind: &str,
+        source: uuid::Uuid,
+    ) -> Result<bool, AppError>;
 }
 
 #[async_trait]

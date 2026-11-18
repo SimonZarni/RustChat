@@ -25,6 +25,7 @@ use rustchat_infrastructure::{
     },
     ratelimit::{InMemoryRateLimiter, PgRateLimiter},
     security::{Argon2Hasher, OsTokenService, SystemClock},
+    web_push::VapidWebPush,
 };
 use tokio::net::TcpListener;
 
@@ -137,6 +138,18 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         cluster::gap_handler(resync_sender.clone()),
     );
     let presence_store = Arc::new(PgPresenceStore::new(pool.clone(), instance_id));
+    let notifications =
+        NotificationService::new(Arc::new(PgNotificationRepository::new(pool.clone())));
+    let notifications = if let Some(push) = config.web_push.as_ref() {
+        Arc::new(notifications.with_push_delivery(Arc::new(VapidWebPush::new(
+            push.public_key.clone(),
+            push.private_key_pem.clone(),
+            push.subject.clone(),
+        )?)))
+    } else {
+        Arc::new(notifications)
+    };
+
     let state = AppState::new(
         Arc::new(auth),
         conversations,
@@ -153,9 +166,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     .with_social(Arc::new(SocialService::new(Arc::new(
         PgSocialRepository::new(pool.clone()),
     ))))
-    .with_notifications(Arc::new(NotificationService::new(Arc::new(
-        PgNotificationRepository::new(pool.clone()),
-    ))))
+    .with_notifications(notifications)
     .with_notification_events(notification_sender)
     // General API budgets are per server process (in memory, bounded); the stricter
     // authentication limits above are shared through PostgreSQL.
