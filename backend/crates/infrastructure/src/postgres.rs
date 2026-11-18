@@ -408,7 +408,7 @@ impl PgNotificationRepository {
 #[async_trait]
 impl NotificationRepository for PgNotificationRepository {
     async fn list(&self, user: UserId, limit: usize) -> Result<Vec<NotificationRecord>, AppError> {
-        let rows=sqlx::query("SELECT n.id,n.kind,n.actor_id,u.username AS actor_username,n.conversation_id,n.message_id,n.created_at,n.read_at FROM notifications n LEFT JOIN users u ON u.id=n.actor_id WHERE n.recipient_id=$1 AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$1 AND b.blocked_id=n.actor_id) OR (b.blocker_id=n.actor_id AND b.blocked_id=$1)) ORDER BY n.created_at DESC,n.id DESC LIMIT $2")
+        let rows=sqlx::query("SELECT n.id,n.kind,n.actor_id,u.username AS actor_username,n.conversation_id,n.message_id,n.community_id,n.event_type,n.created_at,n.read_at FROM notifications n LEFT JOIN users u ON u.id=n.actor_id WHERE n.recipient_id=$1 AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$1 AND b.blocked_id=n.actor_id) OR (b.blocker_id=n.actor_id AND b.blocked_id=$1)) ORDER BY n.created_at DESC,n.id DESC LIMIT $2")
             .bind(user.as_uuid()).bind(i64::try_from(limit.clamp(1,100)).unwrap_or(100)).fetch_all(&self.pool).await.map_err(db_error)?;
         rows.into_iter()
             .map(|r| {
@@ -419,6 +419,8 @@ impl NotificationRepository for PgNotificationRepository {
                     actor_username: r.try_get("actor_username").map_err(db_error)?,
                     conversation_id: r.try_get("conversation_id").map_err(db_error)?,
                     message_id: r.try_get("message_id").map_err(db_error)?,
+                    community_id: r.try_get("community_id").map_err(db_error)?,
+                    event_type: r.try_get("event_type").map_err(db_error)?,
                     created_at: r.try_get("created_at").map_err(db_error)?,
                     read_at: r.try_get("read_at").map_err(db_error)?,
                 })
@@ -522,6 +524,17 @@ impl NotificationRepository for PgNotificationRepository {
         sqlx::query("INSERT INTO user_notification_dnd_schedules(user_id,enabled,start_time,end_time,timezone,weekdays,updated_at) VALUES($1,$2,$3,$4,$5,$6,now()) ON CONFLICT(user_id) DO UPDATE SET enabled=EXCLUDED.enabled,start_time=EXCLUDED.start_time,end_time=EXCLUDED.end_time,timezone=EXCLUDED.timezone,weekdays=EXCLUDED.weekdays,updated_at=now()")
             .bind(user.as_uuid()).bind(schedule.enabled).bind(&schedule.start_time).bind(&schedule.end_time).bind(&schedule.timezone).bind(&schedule.weekdays).execute(&self.pool).await.map_err(db_error)?;
         self.dnd_schedule(user).await
+    }
+    async fn create_community_event(
+        &self,
+        community: rustchat_domain::identity::CommunityId,
+        actor: UserId,
+        event_type: &str,
+        source: Uuid,
+    ) -> Result<Option<UserId>, AppError> {
+        let recipient: Option<Uuid> = sqlx::query_scalar("INSERT INTO notifications(id,recipient_id,actor_id,kind,source_id,community_id,event_type,created_at) SELECT $1,c.owner_id,$2,'community_event',$3,c.id,$4,now() FROM communities c JOIN community_members cm ON cm.community_id=c.id AND cm.user_id=$2 WHERE c.id=$5 AND c.owner_id<>$2 ON CONFLICT DO NOTHING RETURNING recipient_id")
+            .bind(Uuid::now_v7()).bind(actor.as_uuid()).bind(source).bind(event_type).bind(community.as_uuid()).fetch_optional(&self.pool).await.map_err(db_error)?;
+        Ok(recipient.map(UserId::from_uuid))
     }
 }
 

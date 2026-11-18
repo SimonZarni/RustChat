@@ -1,10 +1,10 @@
 import type { Notification } from './useNotifications'
 
 export function NotificationDialog({
-  items, unreadCount, onClose, onRead, onReadAll, onOpenConversation, onOpenFriends,
+  items, unreadCount, onClose, onRead, onReadAll, onOpenConversation, onOpenFriends, onOpenCommunity,
 }: {
   items: Notification[]; unreadCount: number; onClose: () => void; onRead: (id: string) => Promise<void>
-  onReadAll: () => Promise<void>; onOpenConversation: (id: string) => void; onOpenFriends: () => void
+  onReadAll: () => Promise<void>; onOpenConversation: (id: string) => void; onOpenFriends: () => void; onOpenCommunity: (id: string) => void
 }) {
   return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
     <section className="dialog notification-dialog" role="dialog" aria-modal="true" aria-labelledby="notifications-title">
@@ -14,10 +14,11 @@ export function NotificationDialog({
       {items.length === 0 ? <p className="notification-empty">You’re all caught up.</p> : <div className="notification-list">
         {items.map((item) => {
           const actor = item.actor_username ? `@${item.actor_username}` : 'Someone'
-          const description = item.kind === 'direct_message' ? 'sent you a message' : item.kind === 'mention' ? 'mentioned you' : 'sent you a friend request'
+          const description = item.kind === 'direct_message' ? 'sent you a message' : item.kind === 'mention' ? 'mentioned you' : item.kind === 'friend_request' ? 'sent you a friend request' : item.event_type === 'member_joined' ? 'joined your community' : 'created a channel'
           return <button className={`notification-row ${item.read_at ? '' : 'unread'}`} key={item.id} onClick={() => {
             void onRead(item.id)
             if (item.conversation_id) { onClose(); onOpenConversation(item.conversation_id) }
+            else if (item.community_id) { onClose(); onOpenCommunity(item.community_id) }
             else { onClose(); onOpenFriends() }
           }}>
             <span className="notification-dot" aria-hidden="true" />

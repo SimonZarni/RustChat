@@ -184,3 +184,53 @@ async fn dnd_schedule_persists_and_validates_timezone_and_weekdays(pool: PgPool)
     let invalid = call(&api, Method::PUT, path, Some(json!({"enabled":true,"start_time":"22:00","end_time":"07:30","timezone":"No/Such_Zone","weekdays":[1,2,3]})), Some(&user)).await;
     assert_eq!(invalid.status, StatusCode::BAD_REQUEST);
 }
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn community_member_join_creates_owner_notification(pool: PgPool) {
+    let api = app(pool, Options::default());
+    let owner = sign_in(&api, "communityowner").await;
+    let member = sign_in(&api, "communitymember").await;
+    let created = call(
+        &api,
+        Method::POST,
+        "/api/v1/communities",
+        Some(json!({"name":"Quiet Garden"})),
+        Some(&owner),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    let community_id = created.json["community"]["id"].as_str().unwrap();
+    let invite = call(
+        &api,
+        Method::POST,
+        &format!("/api/v1/communities/{community_id}/invites"),
+        Some(json!({"ttl_seconds":3600,"max_uses":2})),
+        Some(&owner),
+    )
+    .await;
+    assert_eq!(invite.status, StatusCode::CREATED);
+    let joined = call(
+        &api,
+        Method::POST,
+        "/api/v1/communities/join",
+        Some(json!({"invite_code":invite.json["invite_code"]})),
+        Some(&member),
+    )
+    .await;
+    assert_eq!(joined.status, StatusCode::OK);
+    let inbox = call(
+        &api,
+        Method::GET,
+        "/api/v1/notifications",
+        None,
+        Some(&owner),
+    )
+    .await;
+    assert_eq!(inbox.json["unread_count"], 1);
+    assert_eq!(inbox.json["notifications"][0]["kind"], "community_event");
+    assert_eq!(
+        inbox.json["notifications"][0]["event_type"],
+        "member_joined"
+    );
+    assert_eq!(inbox.json["notifications"][0]["community_id"], community_id);
+}

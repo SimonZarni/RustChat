@@ -179,6 +179,7 @@ function Shell() {
         onRead={async (id) => { try { await notifications.markRead(id) } catch (cause) { setError(errorMessage(cause, 'Could not update notification')) } }}
         onReadAll={async () => { try { await notifications.markAllRead() } catch (cause) { setError(errorMessage(cause, 'Could not update notifications')) } }}
         onOpenConversation={openConversation} onOpenFriends={() => setShowPeople(true)}
+        onOpenCommunity={(id) => communities.setSelectedCommunityId(id)}
       />}
       {showNotificationPreferences && <NotificationPreferencesDialog
         targets={notificationTargets}

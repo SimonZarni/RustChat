@@ -147,7 +147,7 @@ Blocking hides profiles and presence in both directions, prevents new friend req
 
 ### Implemented: in-app notifications
 
-All routes require the session cookie; writes also require an allowed `Origin`. Notifications currently cover direct messages, @mentions, and friend requests. Records are durable, unread counts are computed server-side, and message text is never included.
+All routes require the session cookie; writes also require an allowed `Origin`. Notifications cover direct messages, @mentions, friend requests, and owner-facing community events for member joins and channel creation. Records are durable, unread counts are computed server-side, and message text is never included.
 
 | Method and path | Success | Notes |
 |---|---|---|
@@ -159,7 +159,7 @@ All routes require the session cookie; writes also require an allowed `Origin`. 
 | `GET /api/v1/conversations/{id}/notification-preferences` | `200` | Caller must be able to access the conversation/channel; absent settings return enabled defaults |
 | `PUT /api/v1/conversations/{id}/notification-preferences` | `200` | Saves message/mention toggles and permanent or timed mute |
 
-Each item contains `id`, `kind` (`direct_message`, `mention`, or `friend_request`), optional `actor_id`/`actor_username`, optional `conversation_id`/`message_id`, `created_at`, and nullable `read_at`. Friend request accept/reject/cancel also marks its notification read. Advancing a conversation read cursor marks direct-message and mention notifications through that sequence as read. Conversation/channel preferences default to enabled messages and mentions; a mute suppresses both notification kinds while preserving message delivery. Timed mute accepts an RFC3339 `muted_until` in the future; permanent mute uses `muted: true` and `muted_until: null`. Browser notifications are opt-in and shown while the app is open in a hidden tab; scheduled quiet hours suppress these alerts. Native background delivery and selected community events remain planned.
+Each item contains `id`, `kind` (`direct_message`, `mention`, `friend_request`, or `community_event`), optional `actor_id`/`actor_username`, optional `conversation_id`/`message_id` and `community_id`/`event_type`, `created_at`, and nullable `read_at`. Friend request accept/reject/cancel also marks its notification read. Advancing a conversation read cursor marks direct-message and mention notifications through that sequence as read. Conversation/channel preferences default to enabled messages and mentions; a mute suppresses both notification kinds while preserving message delivery. Timed mute accepts an RFC3339 `muted_until` in the future; permanent mute uses `muted: true` and `muted_until: null`. Browser notifications are opt-in and shown while the app is open in a hidden tab; scheduled quiet hours suppress these alerts. Native background delivery remains planned.
 
 The member profile response is the supported way for a conversation participant to resolve member IDs to usernames. It does not provide a global user directory.
 

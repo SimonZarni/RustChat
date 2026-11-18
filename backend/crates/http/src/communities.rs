@@ -25,6 +25,28 @@ fn publish_community_event(state: &AppState, community_id: CommunityId, kind: &'
     });
 }
 
+async fn publish_community_notification(
+    state: &AppState,
+    community_id: CommunityId,
+    actor: UserId,
+    event_type: &'static str,
+) -> Result<(), ApiError> {
+    if let Some(service) = state.notifications.as_deref() {
+        if let Some(recipient) = service
+            .community_event(community_id, actor, event_type)
+            .await?
+        {
+            state.publish_notification(crate::NotificationEvent {
+                event_id: Uuid::now_v7(),
+                recipient_id: recipient.as_uuid(),
+                kind: "community_event".to_owned(),
+                occurred_at: time::OffsetDateTime::now_utc(),
+            });
+        }
+    }
+    Ok(())
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateCommunity {
@@ -517,6 +539,7 @@ pub async fn join(
         .communities
         .join(auth.user.id, &body.invite_code)
         .await?;
+    publish_community_notification(&state, community.id, auth.user.id, "member_joined").await?;
     publish_community_event(&state, community.id, "members.updated");
     Ok((
         StatusCode::OK,
@@ -626,6 +649,13 @@ pub async fn create_channel(
             body.read_only,
         )
         .await?;
+    publish_community_notification(
+        &state,
+        channel.community_id,
+        auth.user.id,
+        "channel_created",
+    )
+    .await?;
     publish_community_event(&state, channel.community_id, "channels.updated");
     Ok((
         StatusCode::CREATED,

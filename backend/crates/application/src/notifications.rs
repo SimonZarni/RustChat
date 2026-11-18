@@ -106,4 +106,17 @@ impl NotificationService {
         }
         self.repository.set_dnd_schedule(user, schedule).await
     }
+    pub async fn community_event(
+        &self,
+        community: rustchat_domain::identity::CommunityId,
+        actor: UserId,
+        event_type: &str,
+    ) -> Result<Option<UserId>, AppError> {
+        if !matches!(event_type, "member_joined" | "channel_created") {
+            return Err(AppError::InvalidNotificationPreferences);
+        }
+        self.repository
+            .create_community_event(community, actor, event_type, Uuid::now_v7())
+            .await
+    }
 }

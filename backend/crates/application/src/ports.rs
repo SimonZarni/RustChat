@@ -350,6 +350,8 @@ pub struct NotificationRecord {
     pub actor_username: Option<String>,
     pub conversation_id: Option<uuid::Uuid>,
     pub message_id: Option<uuid::Uuid>,
+    pub community_id: Option<uuid::Uuid>,
+    pub event_type: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339::option")]
@@ -401,6 +403,13 @@ pub trait NotificationRepository: Send + Sync {
         user: UserId,
         schedule: DndSchedule,
     ) -> Result<DndSchedule, AppError>;
+    async fn create_community_event(
+        &self,
+        community: rustchat_domain::identity::CommunityId,
+        actor: UserId,
+        event_type: &str,
+        source: uuid::Uuid,
+    ) -> Result<Option<UserId>, AppError>;
 }
 
 #[async_trait]

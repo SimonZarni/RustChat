@@ -4,11 +4,13 @@ import type { User } from '../../types'
 
 export type Notification = {
   id: string
-  kind: 'direct_message' | 'mention' | 'friend_request'
+  kind: 'direct_message' | 'mention' | 'friend_request' | 'community_event'
   actor_id: string | null
   actor_username: string | null
   conversation_id: string | null
   message_id: string | null
+  community_id: string | null
+  event_type: 'member_joined' | 'channel_created' | null
   created_at: string
   read_at: string | null
 }

@@ -46,7 +46,7 @@ This is the original planning inventory, not the implemented schema; see **Imple
 
 ### Implemented schema
 
-The implemented tables are described below (`backend/migrations/0001_identity.sql` through `0031_notification_dnd_schedules.sql`). Authentication rate-limit keys are SHA-256 digests with expiry and are shared by server instances using this database. Instance administration adds nullable account suspension timestamps and `instance_admin_audit_log`, retaining suspension and restoration actions with actor and target references. Basic profiles include an editable display name and bio. Attachments store metadata and opaque object keys in PostgreSQL; file bytes live in the configured S3-compatible store. Social relationships are stored in `friend_requests`, canonical `friendships`, and directional `user_blocks`.
+The implemented tables are described below (`backend/migrations/0001_identity.sql` through `0032_community_event_notifications.sql`). Authentication rate-limit keys are SHA-256 digests with expiry and are shared by server instances using this database. Instance administration adds nullable account suspension timestamps and `instance_admin_audit_log`, retaining suspension and restoration actions with actor and target references. Basic profiles include an editable display name and bio. Attachments store metadata and opaque object keys in PostgreSQL; file bytes live in the configured S3-compatible store. Social relationships are stored in `friend_requests`, canonical `friendships`, and directional `user_blocks`.
 
 **`users`**
 
@@ -122,6 +122,8 @@ Messages may reference a parent message for replies. The composite foreign key b
 **`conversation_notification_preferences`** (migration `0030_conversation_notification_preferences.sql`) stores per-user message and mention toggles plus permanent or timed mutes for conversations and channel conversations. Missing rows default to enabled and unmuted. Message transactions consult these settings before creating notification records; messages are still delivered.
 
 **`user_notification_dnd_schedules`** (migration `0031_notification_dnd_schedules.sql`) stores optional local quiet hours, an IANA timezone, and ISO weekday selection for each user.
+
+Community event notifications store a community and constrained event type (`member_joined` or `channel_created`); they notify the owner when another member joins or creates a channel.
 
 ## 5. Relationships (conceptual)
 
