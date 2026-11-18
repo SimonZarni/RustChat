@@ -452,6 +452,8 @@ Acceptance criteria:
 -   Voice service failure does not corrupt text messaging or other core
     data.
 
+**Implementation status:** Voice channels, channel-scoped `CONNECT_VOICE` permissions, authenticated short-lived room-token issuance, and the browser LiveKit client are implemented. The client supports muted join, microphone mute/unmute and selection, speaker selection and volume, participant/speaking indicators, hold-to-talk, and LiveKit reconnection/connection-quality status. Operators must provision LiveKit separately and configure its public WebSocket URL and API credentials; TURN/network deployment and production-provider rehearsal remain operational work.
+
 ### 4.10 Video and screen sharing
 
 **Priority:** P2.

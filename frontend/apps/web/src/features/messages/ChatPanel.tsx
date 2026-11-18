@@ -6,19 +6,20 @@ import type { ConversationState } from './useConversation'
 type Props = {
   user: User
   /** Null when nothing is selected. */
-  active: { id: string; title: string; subtitle: string; avatar: string; placeholder: string; readOnly: boolean } | null
+  active: { id: string; title: string; subtitle: string; avatar: string; placeholder: string; readOnly: boolean; voiceCapable: boolean } | null
   hiddenOnMobile: boolean
   connected: boolean
   error: string
   onDismissError: () => void
   onBack: () => void
   onStart: () => void
+  onStartVoice: () => void
   conversation: ConversationState
   typingUserId: string | null
   onTyping: (active: boolean) => void
 }
 
-export function ChatPanel({ user, active, hiddenOnMobile, connected, error, onDismissError, onBack, onStart, conversation, typingUserId, onTyping }: Props) {
+export function ChatPanel({ user, active, hiddenOnMobile, connected, error, onDismissError, onBack, onStart, onStartVoice, conversation, typingUserId, onTyping }: Props) {
   return (
     <section className={`chat-panel ${hiddenOnMobile ? 'mobile-hidden' : ''}`}>
       <header className="chat-header">
@@ -30,6 +31,7 @@ export function ChatPanel({ user, active, hiddenOnMobile, connected, error, onDi
             <div className="connection-status" role="status" aria-live="polite">
               <span className={connected ? 'status-dot online' : 'status-dot'} />{connected ? 'Live' : 'Reconnecting'}
             </div>
+            {active.voiceCapable && <button className="voice-start-button" onClick={onStartVoice} aria-label="Start voice call" title="Start voice call">◖ Voice</button>}
             <button className="more-button" aria-label="Conversation details">···</button>
           </>
         ) : (

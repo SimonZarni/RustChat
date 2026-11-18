@@ -17,11 +17,12 @@ type Props = {
   /** The active conversation is no longer valid (community changed, left or deleted). */
   onClearActive: () => void
   onChannelDeleted: (conversationId: string) => void
+  onJoinVoice: (channel: import('../../types').Channel) => void
   onError: (message: string) => void
 }
 
 /** Sidebar block listing communities and channels, plus the dialogs that manage them. */
-export function CommunitySection({ state, user, activeId, onOpenConversation, onClearActive, onChannelDeleted, onError }: Props) {
+export function CommunitySection({ state, user, activeId, onOpenConversation, onClearActive, onChannelDeleted, onJoinVoice, onError }: Props) {
   const { communities, selectedCommunityId, channels, categories } = state
   const dialogs = useDialogs()
   const [dialog, setDialog] = useState<Dialogs>(null)
@@ -112,8 +113,8 @@ export function CommunitySection({ state, user, activeId, onOpenConversation, on
             <div className="channel-group" key={group.id}>
               <span className="channel-group-label">{group.label}</span>
               {group.channels.map((channel) => (
-                <button key={channel.id} className={'channel-item ' + (activeId === channel.conversation_id ? 'selected' : '')} onClick={() => onOpenConversation(channel.conversation_id)}>
-                  <span>#</span>{channel.name}
+                <button key={channel.id} className={'channel-item ' + (activeId === channel.conversation_id ? 'selected' : '')} onClick={() => channel.channel_type === 'voice' ? onJoinVoice(channel) : onOpenConversation(channel.conversation_id)}>
+                  <span>{channel.channel_type === 'voice' ? '◖' : '#'}</span>{channel.name}{channel.channel_type === 'voice' && <small>Join</small>}
                 </button>
               ))}
             </div>

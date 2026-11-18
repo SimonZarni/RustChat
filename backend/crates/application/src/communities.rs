@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use rustchat_domain::{
-    community::{Category, Channel, Community, Role},
+    community::{Category, Channel, ChannelType, Community, Role},
     identity::{CategoryId, ChannelId, CommunityId, RoleId, User, UserId},
 };
 use time::Duration;
@@ -22,7 +22,8 @@ pub const CREATE_INVITES: u64 = 32;
 pub const SEND_MESSAGES: u64 = 64;
 pub const READ_MESSAGES: u64 = 128;
 pub const MANAGE_MESSAGES: u64 = 256;
-pub const ALL_PERMISSIONS: u64 = 511;
+pub const ALL_PERMISSIONS: u64 = 1023;
+pub const CONNECT_VOICE: u64 = 512;
 
 #[derive(Clone, Copy)]
 pub struct CommunityServiceConfig {
@@ -234,6 +235,7 @@ impl CommunityService {
         description: &str,
         category: Option<CategoryId>,
         read_only: bool,
+        channel_type: ChannelType,
     ) -> Result<Channel, AppError> {
         let name = name.trim().to_ascii_lowercase();
         let description = description.trim();
@@ -253,6 +255,7 @@ impl CommunityService {
                 description,
                 category,
                 read_only,
+                channel_type,
                 self.clock.now(),
             )
             .await
@@ -264,6 +267,14 @@ impl CommunityService {
         community: CommunityId,
     ) -> Result<Vec<Channel>, AppError> {
         self.repo.list_channels(caller, community).await
+    }
+
+    pub async fn can_join_voice(
+        &self,
+        caller: UserId,
+        channel: ChannelId,
+    ) -> Result<bool, AppError> {
+        self.repo.can_join_voice(caller, channel).await
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DialogProvider } from './components/Dialogs'
 import { AccountFooter } from './features/account/AccountFooter'
 import { AuthScreen } from './features/auth/AuthScreen'
@@ -19,6 +19,8 @@ import { conversationShortcut, displayName } from './lib/format'
 import { readVerifyEmailToken } from './lib/links'
 import { useTheme } from './lib/useTheme'
 import type { Conversation, User } from './types'
+import type { VoiceTarget } from './features/voice/VoiceRoomDialog'
+const VoiceRoomDialog = lazy(() => import('./features/voice/VoiceRoomDialog').then((module) => ({ default: module.VoiceRoomDialog })))
 
 export default function App() {
   return <DialogProvider><Shell /></DialogProvider>
@@ -38,6 +40,7 @@ function Shell() {
   const [showPeople, setShowPeople] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
   const [showNotificationPreferences, setShowNotificationPreferences] = useState(false)
+  const [voiceTarget, setVoiceTarget] = useState<VoiceTarget | null>(null)
   const [mobileList, setMobileList] = useState(true)
   const socketRef = useRef<WebSocket | null>(null)
 
@@ -126,6 +129,7 @@ function Shell() {
     avatar: activeChannel ? '#' : activeConversation?.kind === 'group' ? 'G' : 'D',
     placeholder: activeChannel ? `Message #${activeChannel.name}` : `Message ${title}`,
     readOnly: activeChannel?.read_only ?? false,
+    voiceCapable: Boolean(activeConversation && !activeChannel),
   } : null
 
   return (
@@ -148,7 +152,7 @@ function Shell() {
         <button className="people-entry" onClick={() => setShowPeople(true)}><span aria-hidden="true">◎</span> Friends &amp; blocked</button>
         <CommunitySection
           state={communities} user={user} activeId={activeId} onOpenConversation={openConversation}
-          onClearActive={() => setActiveId(null)} onChannelDeleted={(id) => setActiveId((current) => current === id ? null : current)} onError={setError}
+          onClearActive={() => setActiveId(null)} onChannelDeleted={(id) => setActiveId((current) => current === id ? null : current)} onJoinVoice={(channel) => setVoiceTarget({ title: channel.name, tokenPath: `/api/v1/channels/${channel.id}/voice-token` })} onError={setError}
         />
         <div className="section-heading dm-heading">
           <span>DIRECT MESSAGES</span>
@@ -166,6 +170,7 @@ function Shell() {
       <ChatPanel
         user={user} active={active} hiddenOnMobile={mobileList} connected={realtime.connected} error={error}
         onDismissError={() => setError('')} onBack={() => setMobileList(true)} onStart={() => setShowNewConversation(true)}
+        onStartVoice={() => { if (active) setVoiceTarget({ title: active.title, tokenPath: `/api/v1/conversations/${active.id}/voice-token` }) }}
         conversation={conversation} typingUserId={realtime.typingUserId} onTyping={realtime.sendTyping}
       />
       {showNewConversation && (
@@ -188,6 +193,7 @@ function Shell() {
         userId={user.id}
         onClose={() => setShowNotificationPreferences(false)} onError={setError}
       />}
+      {voiceTarget && <Suspense fallback={null}><VoiceRoomDialog target={voiceTarget} onClose={() => setVoiceTarget(null)} onError={setError} /></Suspense>}
     </main>
   )
 }

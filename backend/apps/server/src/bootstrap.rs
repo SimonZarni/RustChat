@@ -13,7 +13,7 @@ use rustchat_application::{
     ratelimit::ApiRateLimiter,
     social::SocialService,
 };
-use rustchat_http::{AppEvents, AppState, HttpConfig, cluster, router};
+use rustchat_http::{AppEvents, AppState, HttpConfig, VoiceConfig, cluster, router};
 use rustchat_infrastructure::{
     attachments::S3AttachmentStorage,
     cluster::{PgEventBus, PgPresenceStore},
@@ -183,6 +183,14 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
             async move { postgres::ready(&pool).await }
         }
     });
+    let state = match config.livekit.as_ref() {
+        Some(livekit) => state.with_voice(VoiceConfig {
+            url: livekit.url.clone(),
+            api_key: livekit.api_key.clone(),
+            api_secret: livekit.api_secret.clone(),
+        }),
+        None => state,
+    };
     let attachment_service = config.object_storage.as_ref().map(|storage| {
         Arc::new(AttachmentService::new(
             Arc::new(PgAttachmentRepository::new(pool.clone())),

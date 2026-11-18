@@ -1,5 +1,6 @@
 //! Communities, text channels and their permission data.
 
+use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 use crate::identity::{CategoryId, ChannelId, CommunityId, InviteId, RoleId, UserId};
@@ -20,11 +21,34 @@ pub struct Channel {
     pub community_id: CommunityId,
     pub conversation_id: crate::identity::ConversationId,
     pub category_id: Option<CategoryId>,
+    pub channel_type: ChannelType,
     pub name: String,
     pub description: String,
     pub position: i32,
     pub read_only: bool,
     pub created_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelType {
+    Text,
+    Voice,
+}
+
+impl Default for ChannelType {
+    fn default() -> Self {
+        Self::Text
+    }
+}
+
+impl ChannelType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Voice => "voice",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

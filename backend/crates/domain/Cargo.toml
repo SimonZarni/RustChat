@@ -13,3 +13,4 @@ workspace = true
 thiserror = "2.0.21"
 time = "0.3.55"
 uuid = { version = "1.29.2", features = ["v7"] }
+serde = { version = "1.0.229", features = ["derive"] }

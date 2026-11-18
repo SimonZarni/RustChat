@@ -13,6 +13,7 @@ mod notifications;
 mod presence;
 mod realtime;
 mod social;
+mod voice;
 
 use std::future::Future;
 use std::sync::{
@@ -80,6 +81,7 @@ pub struct AppState {
     pub(crate) attachments: Option<Arc<rustchat_application::attachments::AttachmentService>>,
     pub(crate) social: Option<Arc<rustchat_application::social::SocialService>>,
     pub(crate) notifications: Option<Arc<rustchat_application::notifications::NotificationService>>,
+    pub(crate) voice: Option<VoiceConfig>,
     pub(crate) communities: Arc<rustchat_application::communities::CommunityService>,
     pub(crate) events: broadcast::Sender<Message>,
     pub(crate) typing_events: broadcast::Sender<TypingEvent>,
@@ -127,6 +129,7 @@ impl AppState {
             attachments: None,
             social: None,
             notifications: None,
+            voice: None,
             communities,
             events: events.messages,
             typing_events: events.typing,
@@ -248,6 +251,11 @@ impl AppState {
         self
     }
 
+    pub fn with_voice(mut self, voice: VoiceConfig) -> Self {
+        self.voice = Some(voice);
+        self
+    }
+
     pub fn with_notification_events(
         mut self,
         events: broadcast::Sender<NotificationEvent>,
@@ -263,6 +271,23 @@ impl AppState {
     {
         self.readiness_probe = Arc::new(move || Box::pin(probe()));
         self
+    }
+}
+
+#[derive(Clone)]
+pub struct VoiceConfig {
+    pub url: String,
+    pub api_key: String,
+    pub api_secret: String,
+}
+
+impl std::fmt::Debug for VoiceConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VoiceConfig")
+            .field("url", &self.url)
+            .field("api_key", &"<configured>")
+            .field("api_secret", &"<redacted>")
+            .finish()
     }
 }
 
@@ -450,6 +475,11 @@ pub fn router(state: AppState) -> Router {
             get(messages::delivery_cursors),
         )
         .route("/realtime", get(realtime::upgrade))
+        .route("/channels/{channel_id}/voice-token", post(voice::token))
+        .route(
+            "/conversations/{conversation_id}/voice-token",
+            post(voice::conversation_token),
+        )
         .route(
             "/communities",
             post(communities::create).get(communities::list),

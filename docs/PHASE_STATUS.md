@@ -1,6 +1,6 @@
 # Phase Completion Audit
 
-Last reviewed: 2026-11-17. Phase 2 has begun with the initial attachment flow; storage deployment and recovery are not yet validated. The PRD remains the source of product scope; this file records implementation status against its Phase 0 exit criteria, Phase 1 MVP definition of done, and P0 requirements.
+Last reviewed: 2026-11-18. Phase 2 includes attachments, friends and blocking, notifications, and an initial LiveKit voice implementation; see the Phase 2 progress section for remaining scope. The PRD remains the source of product scope; this file records implementation status against its Phase 0 exit criteria, Phase 1 MVP definition of done, and P0 requirements.
 
 ## Phase 0 — complete
 
@@ -45,6 +45,17 @@ Phase 0's exit criterion is met: a contributor can follow the documented local s
 - **Self-hosting operations:** database-backed readiness and release-tagged upgrade/rollback guidance are implemented; the fresh-volume Compose and restore rehearsal passed locally. Backups can be verified automatically: `deployment/verify-backup.sh` restores a dump into a scratch database and checks it, a CI job (`restore-check`) runs it against a freshly migrated, API-populated database and confirms a damaged dump is rejected, and the recovery point and time objectives are written down as targets to confirm. Two server replicas behind Caddy were rehearsed with Compose (both served requests, traffic continued when one stopped, and a backup taken from the two-replica stack verified and restored). Shared PostgreSQL authentication rate limiting is implemented and tested. Instance administrators are configured by user ID and can list the newest 100 accounts and suspend/restore non-admin users; session revocation and audit recording happen automatically. Administrators can browse the instance audit history, and community managers the community audit history, through the API and web client. DB pool size, group size, and auth rate thresholds are configurable, while other operational limits remain fixed. Metrics currently cover low-cardinality HTTP response totals only; the runbook has not been rehearsed on a production host.
 
 The PRD's core communication exit criterion is implemented. Backend API/WebSocket tests run against PostgreSQL; Playwright covers browser workflows with stateful mocked API responses, not a live server. Phase 1 remains **in progress** until the required screen-reader experience receives a manual assistive-technology review. Existing recovery addresses stay unverified until their owners confirm them. The local deployment, multi-replica and restore workflows have been exercised; a production host and the recovery objectives on real hardware remain unvalidated and are operational follow-up, not a Phase 1 communication feature gap.
+
+## Phase 2 progress
+
+Implemented so far:
+
+- Attachments with optional S3-compatible storage, signed operations, staging cleanup, and paired database/object-store snapshots. Local Garage object transfer and restore have been validated; production-provider recovery still needs an operator rehearsal. Malware scanning and safe previews are not implemented.
+- Friend requests, relationship management, blocks, and privacy enforcement.
+- Persistent in-app notifications, community event preferences, per-conversation/channel preferences and mutes, DND schedules, in-tab notifications, and optional Web Push.
+- Initial LiveKit voice: text/voice channel types, channel `CONNECT_VOICE` permission, short-lived room-scoped audio-only tokens, direct/group conversation room tokens, browser join/mute/device/volume/participant controls, push-to-talk, reconnect state, and connection-quality display. The LiveKit service must be deployed separately and has not been rehearsed on a production network.
+
+Still outstanding for the PRD's Phase 2 exit criterion: moderation/report workflows, desktop packaging and native integrations, production-like operational monitoring and recovery rehearsal, plus voice call discoverability/ringing and production network validation. See [the PRD](RustChat-PRD.md) for full requirements.
 
 ## Checks run during this review
 

@@ -78,6 +78,10 @@ pub enum ConfigError {
     IncompleteWebPushConfig,
     #[error("Web Push VAPID key or subject is invalid")]
     InvalidWebPushConfig,
+    #[error("LiveKit URL, API key, and API secret must be configured together")]
+    IncompleteLiveKitConfig,
+    #[error("RUSTCHAT_LIVEKIT_URL must be a ws(s) URL without a path")]
+    InvalidLiveKitUrl,
 }
 
 /// A database URL. It usually embeds a password, so `Debug` is redacted.
@@ -128,6 +132,7 @@ pub struct Config {
     pub mfa: Option<MfaConfig>,
     pub object_storage: Option<ObjectStorageConfig>,
     pub web_push: Option<WebPushConfig>,
+    pub livekit: Option<LiveKitConfig>,
     pub attachment_max_file_bytes: i64,
     pub attachment_quota_bytes: i64,
 }
@@ -137,6 +142,23 @@ pub struct WebPushConfig {
     pub public_key: String,
     pub private_key_pem: String,
     pub subject: String,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct LiveKitConfig {
+    pub url: String,
+    pub api_key: String,
+    pub api_secret: String,
+}
+
+impl fmt::Debug for LiveKitConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LiveKitConfig")
+            .field("url", &self.url)
+            .field("api_key", &"<configured>")
+            .field("api_secret", &"<redacted>")
+            .finish()
+    }
 }
 
 impl fmt::Debug for WebPushConfig {
@@ -509,6 +531,43 @@ impl Config {
             })
         };
 
+        let livekit_url = lookup("RUSTCHAT_LIVEKIT_URL").filter(|v| !v.trim().is_empty());
+        let livekit_key = lookup("RUSTCHAT_LIVEKIT_API_KEY").filter(|v| !v.trim().is_empty());
+        let livekit_secret = lookup("RUSTCHAT_LIVEKIT_API_SECRET").filter(|v| !v.trim().is_empty());
+        let livekit_set = [
+            livekit_url.is_some(),
+            livekit_key.is_some(),
+            livekit_secret.is_some(),
+        ];
+        let livekit = if livekit_set.iter().all(|set| !set) {
+            None
+        } else if livekit_set.iter().any(|set| !set) {
+            return Err(ConfigError::IncompleteLiveKitConfig);
+        } else {
+            let url = livekit_url.unwrap();
+            let authority = url
+                .strip_prefix("wss://")
+                .or_else(|| url.strip_prefix("ws://"))
+                .unwrap_or_default();
+            if authority.is_empty()
+                || authority.contains(['/', '?', '#', '@', ' '])
+                || (cookie_secure && url.starts_with("ws://"))
+                || livekit_key
+                    .as_ref()
+                    .is_some_and(|key| key.contains([' ', '\n', '\r']))
+                || livekit_secret
+                    .as_ref()
+                    .is_some_and(|secret| secret.len() < 16)
+            {
+                return Err(ConfigError::InvalidLiveKitUrl);
+            }
+            Some(LiveKitConfig {
+                url,
+                api_key: livekit_key.unwrap(),
+                api_secret: livekit_secret.unwrap(),
+            })
+        };
+
         let attachment_max_mib = lookup("RUSTCHAT_ATTACHMENT_MAX_MIB")
             .map(|raw| {
                 raw.parse::<u64>()
@@ -545,6 +604,7 @@ impl Config {
             mfa,
             object_storage,
             web_push,
+            livekit,
             attachment_max_file_bytes: i64::try_from(attachment_max_mib * 1024 * 1024)
                 .map_err(|_| ConfigError::InvalidAttachmentMax)?,
             attachment_quota_bytes: i64::try_from(attachment_quota_gib * 1024 * 1024 * 1024)

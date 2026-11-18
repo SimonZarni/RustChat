@@ -5,7 +5,7 @@
 use async_trait::async_trait;
 use rustchat_domain::{
     attachment::Attachment,
-    community::{Category, Channel, Community, Role},
+    community::{Category, Channel, ChannelType, Community, Role},
     conversation::{Conversation, ConversationName, ConversationPage},
     identity::{
         AttachmentId, CategoryId, ChannelId, CommunityId, ConversationId, EmailAddress, MessageId,
@@ -789,6 +789,7 @@ pub trait CommunityRepository: Send + Sync {
         description: &str,
         category: Option<CategoryId>,
         read_only: bool,
+        channel_type: ChannelType,
         now: OffsetDateTime,
     ) -> Result<Channel, AppError>;
     async fn create_category(
@@ -815,6 +816,7 @@ pub trait CommunityRepository: Send + Sync {
         caller: UserId,
         community: CommunityId,
     ) -> Result<Vec<Channel>, AppError>;
+    async fn can_join_voice(&self, caller: UserId, channel: ChannelId) -> Result<bool, AppError>;
     #[allow(clippy::too_many_arguments)]
     async fn update_channel(
         &self,

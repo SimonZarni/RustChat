@@ -181,7 +181,7 @@ The member profile response is the supported way for a conversation participant 
 | `DELETE /api/v1/communities/{id}/invites` | `204` | Body `{"invite_code":"..."}`; caller needs invite-management permission |
 | `DELETE /api/v1/communities/{id}/invites/{invite_id}` | `204` | Revokes a listed invitation by ID; caller needs invite-management permission |
 | `POST /api/v1/communities/join` | `200` | Body `{"invite_code":"..."}`; checks expiry, revocation and use limit |
-| `GET` / `POST /api/v1/communities/{id}/channels` | `200` / `201` | List visible or create a text channel; POST accepts name, description, read_only and optional category_id |
+| `GET` / `POST /api/v1/communities/{id}/channels` | `200` / `201` | List visible channels or create one; POST accepts name, description, read_only, optional category_id, and `channel_type` (`text` by default or `voice`) |
 | `PATCH` / `DELETE /api/v1/communities/{id}/channels/{channel_id}` | `200` / `204` | Rename, describe, set read-only, reorder, change category_id, or delete a channel |
 | `GET /api/v1/communities/{id}/categories` | `200` | List ordered categories for a community member |
 | `POST /api/v1/communities/{id}/categories` | `201` | Create category; requires `MANAGE_CHANNELS` |
@@ -190,6 +190,10 @@ The member profile response is the supported way for a conversation participant 
 | `PATCH` / `DELETE /api/v1/communities/{id}/roles/{role_id}` | `200` / `204` | Edit/reorder or delete a custom role; default role cannot be deleted |
 | `POST` / `DELETE /api/v1/communities/{id}/members/{user_id}/roles/{role_id}` | `204` | Assign/remove a role subject to hierarchy |
 | `PUT /api/v1/channels/{channel_id}/permissions/{role_id}` | `204` | Set channel allow/deny permission bits |
+| `POST /api/v1/channels/{channel_id}/voice-token` | `200 {"url":"wss://voice.example","token":"<short-lived JWT>","expires_at":<unix seconds>}` | Issues a ten-minute room-scoped LiveKit token only for voice channels when the caller has `VIEW` and `CONNECT_VOICE`; non-members and denied users receive `404`. The API secret is never sent to clients. Returns `503 VOICE_UNAVAILABLE` if LiveKit is not configured |
+| `POST /api/v1/conversations/{conversation_id}/voice-token` | same | Issues a room-scoped audio token to a current direct/group conversation member; community channel conversations cannot use this route. Non-members and blocked access receive `404` |
+
+`CONNECT_VOICE` is permission bit 512. Voice token issuance also requires `VIEW`; new community default roles allow voice connections, and a channel override can deny them. The server issues a short-lived HS256 JWT with a room grant scoped to that voice channel and no room-administration grant.
 | `PATCH /api/v1/communities/{id}` | `200` | Update community settings; owner only |
 | `POST /api/v1/communities/{id}/ownership` | `204` | Transfer ownership to an existing member |
 | `DELETE /api/v1/communities/{id}` | `204` | Delete community with explicit name confirmation; audit record is retained |

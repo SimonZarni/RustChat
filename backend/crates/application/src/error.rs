@@ -79,6 +79,8 @@ pub enum AppError {
     WebPushUnavailable,
     #[error("web push subscription limit reached")]
     WebPushSubscriptionLimit,
+    #[error("voice service is not configured")]
+    VoiceUnavailable,
     #[error("delivery cursor cannot exceed the latest conversation sequence")]
     InvalidDeliveryCursor,
     #[error("reaction request is invalid")]

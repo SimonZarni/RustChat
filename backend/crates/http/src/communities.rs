@@ -6,7 +6,7 @@ use axum::{
     http::StatusCode,
 };
 use rustchat_domain::{
-    community::{Category, Channel, Community, Role},
+    community::{Category, Channel, ChannelType, Community, Role},
     identity::{CategoryId, ChannelId, CommunityId, InviteId, RoleId, User, UserId},
 };
 use serde::{Deserialize, Serialize};
@@ -98,6 +98,8 @@ pub struct CreateChannel {
     read_only: bool,
     #[serde(default)]
     category_id: Option<Uuid>,
+    #[serde(default)]
+    channel_type: ChannelType,
 }
 
 #[derive(Deserialize)]
@@ -195,6 +197,7 @@ pub(super) struct ChannelDto {
     community_id: Uuid,
     conversation_id: Uuid,
     category_id: Option<Uuid>,
+    channel_type: ChannelType,
     name: String,
     description: String,
     position: i32,
@@ -209,6 +212,7 @@ impl From<Channel> for ChannelDto {
             community_id: value.community_id.as_uuid(),
             conversation_id: value.conversation_id.as_uuid(),
             category_id: value.category_id.map(|id| id.as_uuid()),
+            channel_type: value.channel_type,
             name: value.name,
             description: value.description,
             position: value.position,
@@ -649,6 +653,7 @@ pub async fn create_channel(
             &body.description,
             body.category_id.map(CategoryId::from_uuid),
             body.read_only,
+            body.channel_type,
         )
         .await?;
     publish_community_notification(

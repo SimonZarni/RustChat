@@ -63,11 +63,12 @@ type CreateChannelProps = DialogProps & {
 export function CreateChannelDialog({ communityId, categories, onClose, onError, onCreated }: CreateChannelProps) {
   const [name, setName] = useState('')
   const [categoryId, setCategoryId] = useState('')
+  const [channelType, setChannelType] = useState<'text' | 'voice'>('text')
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     try {
-      const result = await api<{ channel: Channel }>(`/api/v1/communities/${communityId}/channels`, { method: 'POST', body: JSON.stringify({ name, category_id: categoryId || null }) })
+      const result = await api<{ channel: Channel }>(`/api/v1/communities/${communityId}/channels`, { method: 'POST', body: JSON.stringify({ name, category_id: categoryId || null, channel_type: channelType }) })
       onCreated(result.channel)
       onClose()
     } catch (cause) { onError(errorMessage(cause, 'Could not create channel')) }
@@ -75,17 +76,23 @@ export function CreateChannelDialog({ communityId, categories, onClose, onError,
 
   return (
     <Dialog titleId="channel-title" onClose={onClose}>
-      <p className="eyebrow">NEW TEXT CHANNEL</p>
+      <p className="eyebrow">NEW CHANNEL</p>
       <h2 id="channel-title">Create a channel</h2>
       <form className="stack-form" onSubmit={submit}>
         <label>Channel name<input autoFocus required maxLength={64} value={name} onChange={(event) => setName(event.target.value)} placeholder="general" /></label>
+        <label>Channel type
+          <select value={channelType} onChange={(event) => setChannelType(event.target.value as 'text' | 'voice')}>
+            <option value="text">Text</option>
+            <option value="voice">Voice</option>
+          </select>
+        </label>
         <label>Category
           <select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
             <option value="">Uncategorized</option>
             {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
           </select>
         </label>
-        <button className="primary-button">Create channel</button>
+        <button className="primary-button">Create {channelType} channel</button>
       </form>
     </Dialog>
   )

@@ -18,7 +18,7 @@ use rustchat_application::{
 };
 use rustchat_domain::{
     attachment::Attachment,
-    community::{Category, Channel, Community, Role},
+    community::{Category, Channel, ChannelType, Community, Role},
     conversation::{Conversation, ConversationKind, ConversationName, ConversationPage},
     identity::{
         AttachmentId, CategoryId, ChannelId, CommunityId, ConversationId, MessageId,
@@ -2011,6 +2011,7 @@ fn community_from(row: &PgRow) -> Result<Community, AppError> {
 
 fn channel_from(row: &PgRow) -> Result<Channel, AppError> {
     let category_id: Option<Uuid> = row.try_get("category_id").map_err(db_error)?;
+    let channel_type: String = row.try_get("channel_type").map_err(db_error)?;
     Ok(Channel {
         id: ChannelId::from_uuid(row.try_get("id").map_err(db_error)?),
         community_id: CommunityId::from_uuid(row.try_get("community_id").map_err(db_error)?),
@@ -2018,6 +2019,11 @@ fn channel_from(row: &PgRow) -> Result<Channel, AppError> {
             row.try_get("conversation_id").map_err(db_error)?,
         ),
         category_id: category_id.map(CategoryId::from_uuid),
+        channel_type: if channel_type == "voice" {
+            ChannelType::Voice
+        } else {
+            ChannelType::Text
+        },
         name: row.try_get("name").map_err(db_error)?,
         description: row.try_get("description").map_err(db_error)?,
         position: row.try_get("position").map_err(db_error)?,
@@ -2109,7 +2115,7 @@ impl CommunityRepository for PgCommunityRepository {
         .await
         .map_err(db_error)?;
         let default_role = Uuid::now_v7();
-        sqlx::query("INSERT INTO community_roles (id, community_id, name, position, permissions, is_default) VALUES ($1, $2, 'everyone', 0, 193, true)")
+        sqlx::query("INSERT INTO community_roles (id, community_id, name, position, permissions, is_default) VALUES ($1, $2, 'everyone', 0, 705, true)")
             .bind(default_role).bind(id).execute(&mut *tx).await.map_err(db_error)?;
         sqlx::query("INSERT INTO community_member_roles (community_id, user_id, role_id) VALUES ($1, $2, $3)")
             .bind(id).bind(owner.as_uuid()).bind(default_role).execute(&mut *tx).await.map_err(db_error)?;
@@ -2569,6 +2575,7 @@ impl CommunityRepository for PgCommunityRepository {
         description: &str,
         category: Option<CategoryId>,
         read_only: bool,
+        channel_type: ChannelType,
         now: OffsetDateTime,
     ) -> Result<Channel, AppError> {
         let mut tx = self.pool.begin().await.map_err(db_error)?;
@@ -2601,8 +2608,8 @@ impl CommunityRepository for PgCommunityRepository {
         sqlx::query("INSERT INTO conversation_members (conversation_id, user_id, joined_at) SELECT $1, user_id, $2 FROM community_members WHERE community_id = $3")
             .bind(conversation).bind(now).bind(community.as_uuid()).execute(&mut *tx).await.map_err(db_error)?;
         let id = Uuid::now_v7();
-        sqlx::query("INSERT INTO community_channels (id, community_id, conversation_id, name, description, position, read_only, created_at, category_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)")
-            .bind(id).bind(community.as_uuid()).bind(conversation).bind(name).bind(description).bind(position).bind(read_only).bind(now).bind(category.map(|id| id.as_uuid()))
+        sqlx::query("INSERT INTO community_channels (id, community_id, conversation_id, name, description, position, read_only, created_at, category_id, channel_type) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)")
+            .bind(id).bind(community.as_uuid()).bind(conversation).bind(name).bind(description).bind(position).bind(read_only).bind(now).bind(category.map(|id| id.as_uuid())).bind(channel_type.as_str())
             .execute(&mut *tx).await.map_err(db_error)?;
         tx.commit().await.map_err(db_error)?;
         Ok(Channel {
@@ -2610,6 +2617,7 @@ impl CommunityRepository for PgCommunityRepository {
             community_id: community,
             conversation_id: ConversationId::from_uuid(conversation),
             category_id: category,
+            channel_type,
             name: name.to_owned(),
             description: description.to_owned(),
             position,
@@ -2623,7 +2631,7 @@ impl CommunityRepository for PgCommunityRepository {
         caller: UserId,
         community: CommunityId,
     ) -> Result<Vec<Channel>, AppError> {
-        let rows = sqlx::query("SELECT ch.id, ch.community_id, ch.conversation_id, ch.name, ch.description, ch.position, ch.read_only, ch.created_at, ch.category_id FROM community_channels ch WHERE ch.community_id = $1 AND channel_has_permission($2, ch.id, 129) ORDER BY COALESCE(ch.category_id, '00000000-0000-0000-0000-000000000000'::uuid), ch.position, ch.id")
+        let rows = sqlx::query("SELECT ch.id, ch.community_id, ch.conversation_id, ch.name, ch.description, ch.position, ch.read_only, ch.created_at, ch.category_id, ch.channel_type FROM community_channels ch WHERE ch.community_id = $1 AND channel_has_permission($2, ch.id, 129) ORDER BY COALESCE(ch.category_id, '00000000-0000-0000-0000-000000000000'::uuid), ch.position, ch.id")
             .bind(community.as_uuid()).bind(caller.as_uuid()).fetch_all(&self.pool).await.map_err(db_error)?;
         if rows.is_empty() {
             let is_member: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM community_members WHERE community_id = $1 AND user_id = $2)")
@@ -2633,6 +2641,11 @@ impl CommunityRepository for PgCommunityRepository {
             }
         }
         rows.iter().map(channel_from).collect()
+    }
+
+    async fn can_join_voice(&self, caller: UserId, channel: ChannelId) -> Result<bool, AppError> {
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM community_channels ch WHERE ch.id = $1 AND ch.channel_type = 'voice' AND channel_has_permission($2, ch.id, 513))")
+            .bind(channel.as_uuid()).bind(caller.as_uuid()).fetch_one(&self.pool).await.map_err(db_error)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2688,7 +2701,7 @@ impl CommunityRepository for PgCommunityRepository {
                 .await
                 .map_err(db_error)?;
         }
-        let updated = sqlx::query("UPDATE community_channels SET name = $2, description = $3, read_only = $4, category_id = CASE WHEN $6 THEN $5 ELSE category_id END WHERE id = $1 RETURNING id, community_id, conversation_id, name, description, position, read_only, created_at, category_id")
+        let updated = sqlx::query("UPDATE community_channels SET name = $2, description = $3, read_only = $4, category_id = CASE WHEN $6 THEN $5 ELSE category_id END WHERE id = $1 RETURNING id, community_id, conversation_id, name, description, position, read_only, created_at, category_id, channel_type")
             .bind(channel.as_uuid()).bind(name).bind(description).bind(read_only).bind(category.flatten().map(|id| id.as_uuid())).bind(category.is_some()).fetch_one(&mut *tx).await.map_err(db_error)?;
         tx.commit().await.map_err(db_error)?;
         channel_from(&updated)

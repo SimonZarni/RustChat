@@ -24,6 +24,7 @@ export type Channel = {
   community_id: string
   conversation_id: string
   category_id: string | null
+  channel_type?: 'text' | 'voice'
   name: string
   description: string
   position: number

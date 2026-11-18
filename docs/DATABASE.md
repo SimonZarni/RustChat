@@ -46,7 +46,7 @@ This is the original planning inventory, not the implemented schema; see **Imple
 
 ### Implemented schema
 
-The implemented tables are described below (`backend/migrations/0001_identity.sql` through `0034_web_push_subscriptions.sql`). Authentication rate-limit keys are SHA-256 digests with expiry and are shared by server instances using this database. Instance administration adds nullable account suspension timestamps and `instance_admin_audit_log`, retaining suspension and restoration actions with actor and target references. Basic profiles include an editable display name and bio. Attachments store metadata and opaque object keys in PostgreSQL; file bytes live in the configured S3-compatible store. Social relationships are stored in `friend_requests`, canonical `friendships`, and directional `user_blocks`.
+The implemented tables are described below (`backend/migrations/0001_identity.sql` through `0035_livekit_voice_channels.sql`). Authentication rate-limit keys are SHA-256 digests with expiry and are shared by server instances using this database. Instance administration adds nullable account suspension timestamps and `instance_admin_audit_log`, retaining suspension and restoration actions with actor and target references. Basic profiles include an editable display name and bio. Attachments store metadata and opaque object keys in PostgreSQL; file bytes live in the configured S3-compatible store. Social relationships are stored in `friend_requests`, canonical `friendships`, and directional `user_blocks`.
 
 **`users`**
 
@@ -109,7 +109,7 @@ Messages may reference a parent message for replies. The composite foreign key b
 
 **`message_mentions`** stores each distinct user mentioned by a message. The composite foreign key requires the mentioned user to be a current member of the same conversation, so mentions cannot disclose an unrelated account through a message. The application resolves `@username` tokens against current members, returns the resolved IDs in message history and realtime events, and replaces the set when a message is edited. Deleting a message or removing a member clears the corresponding mention rows.
 
-**Communities** use `communities`, `community_members`, `community_roles`, `community_member_roles`, `community_categories`, `community_channels`, `channel_role_overrides`, and `community_invites`. Categories have stable per-community order; channel assignment is nullable and checked against the community. Deleting a category preserves its channels and makes them uncategorized. Text channels reuse conversations for membership and message history. `community_audit_log` records settings changes, member removals, ownership transfers and community deletion; the community foreign key becomes null on deletion so the record remains.
+**Communities** use `communities`, `community_members`, `community_roles`, `community_member_roles`, `community_categories`, `community_channels`, `channel_role_overrides`, and `community_invites`. Categories have stable per-community order; channel assignment is nullable and checked against the community. Deleting a category preserves its channels and makes them uncategorized. `community_channels.channel_type` is `text` or `voice`; both retain a backing conversation for membership/authorization, while voice media is carried by LiveKit and is not stored as messages. `CONNECT_VOICE` is permission bit 512 and may be denied by a channel override. `community_audit_log` records settings changes, member removals, ownership transfers and community deletion; the community foreign key becomes null on deletion so the record remains.
 
 **Instance administration** uses `instance_admin_audit_log` to record actual suspend and restore transitions with actor, target, event, time and details. Suspension updates `users.suspended_at`, revokes active sessions and inserts the audit event in one transaction. Administrators page through them with `GET /api/v1/admin/audit`, and managers read a community's rows with `GET /api/v1/communities/{id}/audit`; both use keyset paging on `(created_at, id)`.
 
@@ -127,7 +127,7 @@ Messages may reference a parent message for replies. The composite foreign key b
 
 **`web_push_subscriptions`** (migration `0034_web_push_subscriptions.sql`) stores private push-service endpoints and browser encryption keys for authenticated devices. The API never returns these values; entries are owner-scoped and capped at ten per account.
 
-Community event notifications store a community and constrained event type (`member_joined` or `channel_created`); they are created for enabled current members other than the event actor.
+Community event notifications store a community and constrained event type (`member_joined`, `member_left`, `member_removed`, `channel_created`, `channel_updated`, or `channel_deleted`); they are created for enabled current members other than the event actor.
 
 ## 5. Relationships (conceptual)
 

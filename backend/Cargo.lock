@@ -2708,6 +2708,7 @@ dependencies = [
 name = "rustchat-domain"
 version = "0.0.0"
 dependencies = [
+ "serde",
  "thiserror",
  "time",
  "uuid",
@@ -2720,13 +2721,16 @@ dependencies = [
  "async-trait",
  "axum",
  "axum-extra",
+ "base64 0.23.1",
  "futures-util",
+ "hmac 0.13.0",
  "http-body-util",
  "rustchat-application",
  "rustchat-domain",
  "rustchat-infrastructure",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "sqlx",
  "time",
  "tokio",

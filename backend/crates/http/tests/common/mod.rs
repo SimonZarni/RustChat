@@ -21,7 +21,9 @@ use rustchat_application::{
     ratelimit::{ApiRateLimitConfig, ApiRateLimiter, RateLimitConfig},
     social::SocialService,
 };
-use rustchat_http::{AppEvents, AppState, ClientIpSource, HttpConfig, cluster, router};
+use rustchat_http::{
+    AppEvents, AppState, ClientIpSource, HttpConfig, VoiceConfig, cluster, router,
+};
 use rustchat_infrastructure::{
     cluster::{PgEventBus, PgPresenceStore},
     mfa::AesGcmTotpEngine,
@@ -97,6 +99,7 @@ pub struct Options {
     pub lifecycle: SessionLifecycle,
     pub rate_limits: RateLimitConfig,
     pub client_ip: ClientIpSource,
+    pub voice: Option<VoiceConfig>,
 }
 
 impl Default for Options {
@@ -119,6 +122,7 @@ impl Default for Options {
                 register_per_ip: generous,
             },
             client_ip: ClientIpSource::Peer,
+            voice: None,
         }
     }
 }
@@ -223,6 +227,9 @@ pub fn node(pool: PgPool, options: Options) -> Node {
     }
     if let Some(attachments) = options.attachments {
         state = state.with_attachments(attachments);
+    }
+    if let Some(voice) = options.voice {
+        state = state.with_voice(voice);
     }
     if let Some(instance) = options.cluster {
         let outbox = Arc::new(PgOutboxRepository::new(pool.clone()));

@@ -138,6 +138,11 @@ impl IntoResponse for ApiError {
                     "WEB_PUSH_SUBSCRIPTION_LIMIT",
                     "This account has reached its device notification limit.",
                 ),
+                AppError::VoiceUnavailable => body(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "VOICE_UNAVAILABLE",
+                    "Voice service is not configured on this server.",
+                ),
                 AppError::CommunityOwnerCannotLeave => body(
                     StatusCode::CONFLICT,
                     "COMMUNITY_OWNER_CANNOT_LEAVE",

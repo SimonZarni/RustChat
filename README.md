@@ -10,7 +10,7 @@ The project is intended to provide direct messaging, group conversations, commun
 
 See the [Phase Completion Audit](docs/PHASE_STATUS.md) for the reviewed Phase 0/1 feature inventory, outstanding P0 requirements and checks run.
 
-Phase 2 has started: attachments include optional S3-compatible storage, scoped signed upload/download URLs, scheduled expired-upload cleanup, and paired database/object-store snapshot scripts. Friends and blocking include request management, relationship controls, and server-side privacy enforcement. In-app notifications cover messages, friend requests, and configurable community events, with per-conversation/channel settings, timed mutes, quiet schedules, opt-in in-tab alerts, and optional Web Push for background browser/desktop notifications. Storage still requires an operator-provisioned bucket; malware scanning and inline previews remain planned. See [deployment configuration](docs/DEPLOYMENT.md).
+Phase 2 has started: attachments include optional S3-compatible storage, scoped signed upload/download URLs, scheduled expired-upload cleanup, and paired database/object-store snapshot scripts. Friends and blocking include request management, relationship controls, and server-side privacy enforcement. In-app notifications cover messages, friend requests, and configurable community events, with per-conversation/channel settings, timed mutes, quiet schedules, opt-in in-tab alerts, and optional Web Push for background browser/desktop notifications. Voice channels have channel-scoped join permissions, short-lived LiveKit tokens, and browser controls for joining muted, microphones, speakers, participants, and hold-to-talk. Storage still requires an operator-provisioned bucket; malware scanning and inline previews remain planned. See [deployment configuration](docs/DEPLOYMENT.md).
 
 The technology stack describes the intended direction. It does not imply that every listed feature or integration has already been implemented. Update this section as working functionality becomes available.
 
@@ -27,7 +27,7 @@ The technology stack describes the intended direction. It does not imply that ev
 
 ## Technology stack
 
-The lists below are the intended stack. The current frontend uses React, TypeScript, Vite, plain CSS, and React state with `fetch`, and does not yet use Tailwind CSS, shadcn/ui, TanStack Query, Zustand, Zod or MSW. Valkey, LiveKit and Tauri are not implemented; Garage is selected but not bundled or provisioned by Compose. See [ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The lists below are the intended stack. The current frontend uses React, TypeScript, Vite, plain CSS, and React state with `fetch`, and does not yet use Tailwind CSS, shadcn/ui, TanStack Query, Zustand, Zod or MSW. LiveKit voice-channel integration is implemented, but the LiveKit server must be provisioned separately. Valkey and Tauri are not implemented; Garage is selected but not bundled or provisioned by Compose. See [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ### Backend
 - Rust, Tokio and Axum
