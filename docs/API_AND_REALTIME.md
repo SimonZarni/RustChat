@@ -105,7 +105,7 @@ Profile lookup is exact by username. When `discoverable` is false, unrelated use
 
 Set login and registration caps with `RUSTCHAT_LOGIN_PER_IP_LIMIT`, `RUSTCHAT_LOGIN_PER_USERNAME_LIMIT`, and `RUSTCHAT_REGISTER_PER_IP_LIMIT` (each 1–100000); their time windows remain 15 minutes, 15 minutes, and one hour. `RUSTCHAT_GROUP_MEMBER_LIMIT` sets the group cap (2–500), and `RUSTCHAT_DB_MAX_CONNECTIONS` sets the PostgreSQL pool size. Limits are checked before any password hashing, so a limited request costs almost nothing. Usernames are case-folded and counted whether or not the account exists, so a `429` never reveals which accounts exist. A client network is the IPv4 address or the IPv6 /64 prefix. By default it is the TCP peer address and `X-Forwarded-For` is ignored; set `RUSTCHAT_TRUSTED_PROXY_HOPS=N` only when the server is reachable exclusively through N reverse proxies, in which case the entry N places from the right of `X-Forwarded-For` is used. If that header is missing or malformed the peer address is used. Every other authenticated `/api/v1` route has per-user budgets in classes of its own, so a burst of one kind cannot starve another: reads (600 per minute), message sends (60 per minute), creations of conversations, communities, channels, categories, roles and invites (30 per hour) and all other writes (120 per minute). Requests that fail authentication spend a per-network budget (120 per minute). Over-budget requests get `429 RATE_LIMITED` with `Retry-After`. Configure them with `RUSTCHAT_API_READ_LIMIT`, `RUSTCHAT_API_WRITE_LIMIT`, `RUSTCHAT_MESSAGE_SEND_LIMIT`, `RUSTCHAT_CREATE_LIMIT` and `RUSTCHAT_UNAUTHENTICATED_LIMIT` (each 1–100000; the windows are fixed). Unlike the authentication limits, these counters live in each server process's memory (bounded), so with several instances each has its own budget. Every request spends budget whether or not it later succeeds. The WebSocket gateway is limited by its own subscription, frame and typing limits, and the health, readiness and metrics routes are not limited.
 
-**Error codes in use:** `VALIDATION_ERROR` (422), `USERNAME_TAKEN` (409), `REGISTRATION_CLOSED` (403), `INVALID_CREDENTIALS` (401), `UNAUTHENTICATED` (401), `ORIGIN_NOT_ALLOWED` (403), `BAD_REQUEST` (400/415/422), `PAYLOAD_TOO_LARGE` (413), `RATE_LIMITED` (429), `NOT_FOUND` (404), `EMAIL_UNAVAILABLE` (503), `INVALID_ACCOUNT_TOKEN` (400), `EMAIL_ADDRESS_IN_USE` (409), `MFA_REQUIRED` (401), `INVALID_MFA_CODE` (401), `MFA_ALREADY_ENABLED` (409), `MFA_UNAVAILABLE` (503), `INVALID_CONVERSATION` (422), `MEMBER_LIMIT` (422), `IDEMPOTENCY_CONFLICT` (409), `INVALID_REACTION` (422), `INVALID_REACTION_REQUEST` (400), `INVALID_DELIVERY_CURSOR` (422), `INTERNAL` (500).
+**Error codes in use:** `VALIDATION_ERROR` (422), `USERNAME_TAKEN` (409), `REGISTRATION_CLOSED` (403), `INVALID_CREDENTIALS` (401), `UNAUTHENTICATED` (401), `ORIGIN_NOT_ALLOWED` (403), `BAD_REQUEST` (400/415/422), `PAYLOAD_TOO_LARGE` (413), `RATE_LIMITED` (429), `NOT_FOUND` (404), `EMAIL_UNAVAILABLE` (503), `INVALID_ACCOUNT_TOKEN` (400), `EMAIL_ADDRESS_IN_USE` (409), `MFA_REQUIRED` (401), `INVALID_MFA_CODE` (401), `MFA_ALREADY_ENABLED` (409), `MFA_UNAVAILABLE` (503), `INVALID_CONVERSATION` (422), `MEMBER_LIMIT` (422), `SOCIAL_CONFLICT` (409), `IDEMPOTENCY_CONFLICT` (409), `INVALID_REACTION` (422), `INVALID_REACTION_REQUEST` (400), `INVALID_DELIVERY_CURSOR` (422), `INTERNAL` (500).
 
 **Not yet implemented:** WebAuthn/passkeys and other second factors, and key rotation for stored authenticator secrets. Authentication rate-limit state is shared through PostgreSQL, with hashed keys and expiry. Password reset reuses the login IP and per-username rate limit budgets. Password change reuses login IP and per-username failure limits. Several server instances can share one database; see the realtime section.
 
@@ -125,6 +125,25 @@ All routes require the session cookie. Mutating routes also require an allowed `
 `conversation` contains `{id, kind, name, created_by, created_at, members}`; `name` is `null` for direct conversations and unnamed groups. `kind` is `direct` or `group`; timestamps are RFC 3339 UTC. Exact username matching follows the existing case-insensitive username rules. Unknown usernames return `404`. The group member cap defaults to 100 including the creator, is configured by `RUSTCHAT_GROUP_MEMBER_LIMIT`, and accepts values 2–500. Adding a current member is idempotent. Rejected group sizes return `422 MEMBER_LIMIT`; invalid group operations return `422 INVALID_CONVERSATION`.
 
 Every read and membership mutation is scoped to caller membership in the database. Any group member can manage group membership. Community channel operations additionally enforce role permissions. Conversation list cursors use the last conversation ID from the prior page; ordering is `(created_at, id)` descending.
+
+### Implemented: friends and blocking
+
+All routes require the session cookie; mutations also require an allowed `Origin`. Request endpoints accept exact usernames and intentionally return the same `404` for unknown, undiscoverable, or blocked accounts.
+
+| Method and path | Success | Notes |
+|---|---|---|
+| `GET /api/v1/friends` | `200 {"users":[{"id","username"}]}` | Current friends |
+| `GET /api/v1/friend-requests?direction=incoming\|outgoing` | `200 {"requests":[{"id","user":{"id","username"},"created_at"}]}` | Defaults to incoming |
+| `POST /api/v1/friend-requests` | `200 {"id":"<request UUID>"}` | Body `{"username":"bobby"}`; duplicate, already-friends, or pending reverse request returns `409 SOCIAL_CONFLICT` |
+| `POST /api/v1/friend-requests/{id}/accept` | `204` | Recipient only; creates friendship |
+| `POST /api/v1/friend-requests/{id}/reject` | `204` | Recipient only |
+| `DELETE /api/v1/friend-requests/{id}` | `204` | Sender cancels an outgoing request |
+| `DELETE /api/v1/friends/{user_id}` | `204` | Either friend can end the friendship |
+| `GET /api/v1/blocks` | `200 {"users":[{"id","username"}]}` | Accounts blocked by the caller |
+| `POST /api/v1/blocks` | `204` | Body `{"username":"bobby"}`; removes a friendship and pending requests in either direction |
+| `DELETE /api/v1/blocks/{user_id}` | `204` | Removes the caller's block |
+
+Blocking hides profiles and presence in both directions, prevents new friend requests and direct conversations, rejects new direct messages in an existing direct conversation, and prevents creating or adding users together in a new group when any pair has blocked each other. Existing conversation history remains available to existing members. Blocking is enforced server-side.
 
 The member profile response is the supported way for a conversation participant to resolve member IDs to usernames. It does not provide a global user directory.
 

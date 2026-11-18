@@ -10,6 +10,7 @@ use rustchat_application::{
     error::AppError,
     messages::{MessageConfig, MessageService},
     ratelimit::ApiRateLimiter,
+    social::SocialService,
 };
 use rustchat_http::{AppEvents, AppState, HttpConfig, cluster, router};
 use rustchat_infrastructure::{
@@ -19,7 +20,7 @@ use rustchat_infrastructure::{
     postgres::{
         self, PgAttachmentRepository, PgCommunityRepository, PgConversationRepository,
         PgMessageRepository, PgMfaRepository, PgOutboxRepository, PgSessionRepository,
-        PgUserRepository,
+        PgSocialRepository, PgUserRepository,
     },
     ratelimit::{InMemoryRateLimiter, PgRateLimiter},
     security::{Argon2Hasher, OsTokenService, SystemClock},
@@ -147,6 +148,9 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
             client_ip: config.client_ip,
         },
     )
+    .with_social(Arc::new(SocialService::new(Arc::new(
+        PgSocialRepository::new(pool.clone()),
+    ))))
     // General API budgets are per server process (in memory, bounded); the stricter
     // authentication limits above are shared through PostgreSQL.
     .with_cluster(bus.clone(), presence_store.clone(), resync_sender)
@@ -162,8 +166,8 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
             async move { postgres::ready(&pool).await }
         }
     });
-    let state = match config.object_storage.as_ref() {
-        Some(storage) => state.with_attachments(Arc::new(AttachmentService::new(
+    let attachment_service = config.object_storage.as_ref().map(|storage| {
+        Arc::new(AttachmentService::new(
             Arc::new(PgAttachmentRepository::new(pool.clone())),
             Arc::new(S3AttachmentStorage::new(
                 &storage.endpoint,
@@ -176,7 +180,10 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                 max_file_bytes: config.attachment_max_file_bytes,
                 quota_bytes: config.attachment_quota_bytes,
             },
-        ))),
+        ))
+    });
+    let state = match attachment_service.as_ref() {
+        Some(service) => state.with_attachments(service.clone()),
         None => state,
     };
 
@@ -186,6 +193,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     // Claimed with a lease, so instances sharing the database each dispatch different events.
     let publisher = cluster::spawn_outbox_dispatcher(outbox, event_sender, bus);
     let heartbeat = cluster::spawn_presence_heartbeat(presence_store);
+    let attachment_cleanup = attachment_service.map(spawn_attachment_cleanup);
     let serve_result = axum::serve(
         listener,
         router(state).into_make_service_with_connect_info::<SocketAddr>(),
@@ -194,6 +202,26 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     .await;
     publisher.abort();
     heartbeat.abort();
+    if let Some(cleanup) = attachment_cleanup {
+        cleanup.abort();
+    }
     serve_result?;
     Ok(())
+}
+
+fn spawn_attachment_cleanup(service: Arc<AttachmentService>) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            interval.tick().await;
+            match service.cleanup_expired_uploads().await {
+                Ok(removed) if removed > 0 => {
+                    tracing::info!(removed, "expired attachment uploads cleaned")
+                }
+                Ok(_) => {}
+                Err(error) => tracing::warn!(%error, "expired attachment cleanup pass failed"),
+            }
+        }
+    })
 }

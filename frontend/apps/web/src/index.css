@@ -82,6 +82,26 @@ kbd { padding: 2px 5px; border: 1px solid #e2e5e7; border-radius: 4px; backgroun
 .conversation-list { flex: 1; overflow-y: auto; padding: 0 8px; }
 .community-area { padding: 2px 8px 10px; border-bottom: 1px solid #eef0f1; }
 .section-heading { min-height: 27px; display: flex; align-items: center; gap: 4px; padding: 3px 6px; color: var(--muted); font: 8px ui-monospace, 'Cascadia Code', 'SFMono-Regular', monospace; letter-spacing: .1em; }
+.people-entry { width: 100%; min-height: 36px; margin: 5px 0 12px; padding: 0 10px; display: flex; align-items: center; gap: 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); text-align: left; cursor: pointer; }
+.people-entry:hover { background: var(--subtle); }
+.people-dialog { width: min(100%, 560px); max-height: min(88vh, 760px); overflow: auto; }
+.people-add { display: flex; gap: 8px; margin-top: 18px; }
+.people-add input { flex: 1; min-width: 0; height: 42px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.people-add button, .people-row button:not(.text-button) { min-height: 34px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--accent); color: white; cursor: pointer; }
+.people-add button:disabled, .people-row button:disabled { opacity: .55; cursor: default; }
+.people-block-form { margin-top: 4px; text-align: right; }
+.text-button { border: 0; padding: 6px 8px; background: transparent; color: var(--muted); cursor: pointer; }
+.text-button:hover { color: var(--ink); }
+.people-lists { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 22px; margin-top: 18px; }
+.people-section { min-width: 0; }
+.people-section h3 { margin: 0 0 7px; color: var(--muted); font-size: 11px; font-weight: 600; }
+.people-section > p { margin: 0; color: var(--muted); font-size: 12px; }
+.people-row { min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 5px; border-top: 1px solid var(--line); font-size: 12px; }
+.people-row > span { overflow: hidden; text-overflow: ellipsis; }
+.people-row > div { display: flex; flex: 0 0 auto; gap: 2px; }
+.people-row button { font-size: 11px; }
+.people-notice { margin: 8px 0; color: var(--accent); font-size: 12px; }
+@media (max-width: 540px) { .people-lists { grid-template-columns: 1fr; } .people-add { flex-wrap: wrap; } .people-add input { flex-basis: 100%; } }
 .section-heading > span { flex: 1; }
 .section-heading button { width: 20px; height: 20px; border: 0; border-radius: 4px; background: transparent; color: #8c969d; font: 14px 'Segoe UI', sans-serif; cursor: pointer; }
 .section-heading .join-community-button { width: auto; padding-inline: 4px; color: var(--muted); font-size: 10px; }

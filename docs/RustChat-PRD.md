@@ -242,6 +242,8 @@ Acceptance criteria:
 -   Privacy preferences are enforced by server-side responses and
     realtime events.
 
+**Implementation status:** Friend requests, acceptance, rejection and sender cancellation; friend removal; blocks and unblocks; relationship lists; profile/presence privacy checks; and direct/group entry-point checks are implemented. Blocking also removes existing friendship and pending requests. Current API contract and shared-group behavior are documented in [API and realtime](API_AND_REALTIME.md).
+
 ### 4.3 Direct messages and group conversations
 
 **Priority:** P0.

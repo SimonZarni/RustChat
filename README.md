@@ -10,7 +10,7 @@ The project is intended to provide direct messaging, group conversations, commun
 
 See the [Phase Completion Audit](docs/PHASE_STATUS.md) for the reviewed Phase 0/1 feature inventory, outstanding P0 requirements and checks run.
 
-Phase 2 has started: the initial attachment path is implemented, including private object storage integration, scoped signed upload/download URLs, message association, and browser progress/cancel UI. Storage remains optional and requires an operator-provisioned S3-compatible bucket; see [deployment configuration](docs/DEPLOYMENT.md). Malware scanning, inline previews, and object-store backup/recovery are not implemented yet.
+Phase 2 has started: attachments now include optional S3-compatible storage, scoped signed upload/download URLs, message association, browser progress/cancel UI, scheduled expired-upload cleanup, and paired database/object-store snapshot scripts. Friends and blocking are implemented with request management, relationship controls, and server-side privacy enforcement. Storage still requires an operator-provisioned bucket; malware scanning and inline previews are not implemented. See [deployment configuration](docs/DEPLOYMENT.md).
 
 The technology stack describes the intended direction. It does not imply that every listed feature or integration has already been implemented. Update this section as working functionality becomes available.
 

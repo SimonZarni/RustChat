@@ -10,8 +10,9 @@ use rustchat_application::{
     ports::{
         ActiveSession, AdminUser, AttachmentRepository, AuditEvent, AuditPage, AuditUser,
         CommunityRepository, ConversationRepository, CreateUserOutcome, EmailStatus,
-        EncryptedSecret, MessageRepository, MfaRepository, NewSession, NewUser, SessionRepository,
-        TokenDigest, TotpRecord, UserCredentials, UserRepository, VerifyEmailOutcome,
+        EncryptedSecret, FriendRequest, MessageRepository, MfaRepository, NewSession, NewUser,
+        SessionRepository, SocialRepository, SocialUser, TokenDigest, TotpRecord, UserCredentials,
+        UserRepository, VerifyEmailOutcome,
     },
 };
 use rustchat_domain::{
@@ -394,6 +395,184 @@ fn audit_page(rows: &[PgRow], limit: usize) -> Result<AuditPage, AppError> {
 }
 
 #[derive(Clone)]
+pub struct PgSocialRepository {
+    pool: PgPool,
+}
+impl PgSocialRepository {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl SocialRepository for PgSocialRepository {
+    async fn requests(&self, user: UserId, incoming: bool) -> Result<Vec<FriendRequest>, AppError> {
+        let (owner, peer) = if incoming {
+            ("recipient_id", "sender_id")
+        } else {
+            ("sender_id", "recipient_id")
+        };
+        let sql = format!(
+            "SELECT r.id,r.created_at,u.id AS user_id,u.username FROM friend_requests r JOIN users u ON u.id=r.{peer} WHERE r.{owner}=$1 AND u.deleted_at IS NULL AND u.deactivated_at IS NULL AND u.suspended_at IS NULL ORDER BY r.created_at DESC,r.id DESC"
+        );
+        let rows = sqlx::query(&sql)
+            .bind(user.as_uuid())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db_error)?;
+        rows.into_iter()
+            .map(|r| {
+                Ok(FriendRequest {
+                    id: r.try_get("id").map_err(db_error)?,
+                    user: SocialUser {
+                        id: r.try_get("user_id").map_err(db_error)?,
+                        username: r.try_get("username").map_err(db_error)?,
+                    },
+                    created_at: r.try_get("created_at").map_err(db_error)?,
+                })
+            })
+            .collect()
+    }
+    async fn friends(&self, user: UserId) -> Result<Vec<SocialUser>, AppError> {
+        let rows=sqlx::query("SELECT u.id,u.username FROM friendships f JOIN users u ON u.id=CASE WHEN f.user_low=$1 THEN f.user_high ELSE f.user_low END WHERE (f.user_low=$1 OR f.user_high=$1) AND u.deleted_at IS NULL ORDER BY u.username").bind(user.as_uuid()).fetch_all(&self.pool).await.map_err(db_error)?;
+        rows.into_iter()
+            .map(|r| {
+                Ok(SocialUser {
+                    id: r.try_get("id").map_err(db_error)?,
+                    username: r.try_get("username").map_err(db_error)?,
+                })
+            })
+            .collect()
+    }
+    async fn blocks(&self, user: UserId) -> Result<Vec<SocialUser>, AppError> {
+        let rows=sqlx::query("SELECT u.id,u.username FROM user_blocks b JOIN users u ON u.id=b.blocked_id WHERE b.blocker_id=$1 AND u.deleted_at IS NULL ORDER BY u.username").bind(user.as_uuid()).fetch_all(&self.pool).await.map_err(db_error)?;
+        rows.into_iter()
+            .map(|r| {
+                Ok(SocialUser {
+                    id: r.try_get("id").map_err(db_error)?,
+                    username: r.try_get("username").map_err(db_error)?,
+                })
+            })
+            .collect()
+    }
+    async fn send_request(&self, sender: UserId, username: &Username) -> Result<Uuid, AppError> {
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        let target:Uuid=sqlx::query_scalar("SELECT id FROM users WHERE username=$1 AND deleted_at IS NULL AND deactivated_at IS NULL AND suspended_at IS NULL").bind(username.as_str()).fetch_optional(&mut *tx).await.map_err(db_error)?.ok_or(AppError::NotFound)?;
+        if target == sender.as_uuid() {
+            return Err(AppError::InvalidConversationRequest);
+        }
+        let blocked:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_blocks WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1))").bind(sender.as_uuid()).bind(target).fetch_one(&mut *tx).await.map_err(db_error)?;
+        if blocked {
+            return Err(AppError::NotFound);
+        }
+        let exists:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM friendships WHERE user_low=LEAST($1,$2) AND user_high=GREATEST($1,$2)) OR EXISTS(SELECT 1 FROM friend_requests WHERE (sender_id=$1 AND recipient_id=$2) OR (sender_id=$2 AND recipient_id=$1))").bind(sender.as_uuid()).bind(target).fetch_one(&mut *tx).await.map_err(db_error)?;
+        if exists {
+            return Err(AppError::SocialConflict);
+        }
+        let id = sqlx::query_scalar(
+            "INSERT INTO friend_requests(sender_id,recipient_id) VALUES($1,$2) RETURNING id",
+        )
+        .bind(sender.as_uuid())
+        .bind(target)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db_error)?;
+        tx.commit().await.map_err(db_error)?;
+        Ok(id)
+    }
+    async fn accept_request(&self, user: UserId, request: Uuid) -> Result<(), AppError> {
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        let sender: Uuid = sqlx::query_scalar(
+            "DELETE FROM friend_requests WHERE id=$1 AND recipient_id=$2 RETURNING sender_id",
+        )
+        .bind(request)
+        .bind(user.as_uuid())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_error)?
+        .ok_or(AppError::NotFound)?;
+        sqlx::query("INSERT INTO friendships(user_low,user_high) VALUES(LEAST($1,$2),GREATEST($1,$2)) ON CONFLICT DO NOTHING").bind(user.as_uuid()).bind(sender).execute(&mut *tx).await.map_err(db_error)?;
+        tx.commit().await.map_err(db_error)
+    }
+    async fn reject_request(&self, user: UserId, id: Uuid) -> Result<(), AppError> {
+        self.remove_request(user, id, true).await
+    }
+    async fn cancel_request(&self, user: UserId, id: Uuid) -> Result<(), AppError> {
+        self.remove_request(user, id, false).await
+    }
+    async fn remove_friend(&self, user: UserId, friend: UserId) -> Result<(), AppError> {
+        let r = sqlx::query(
+            "DELETE FROM friendships WHERE user_low=LEAST($1,$2) AND user_high=GREATEST($1,$2)",
+        )
+        .bind(user.as_uuid())
+        .bind(friend.as_uuid())
+        .execute(&self.pool)
+        .await
+        .map_err(db_error)?;
+        if r.rows_affected() == 0 {
+            return Err(AppError::NotFound);
+        }
+        Ok(())
+    }
+    async fn block(&self, user: UserId, username: &Username) -> Result<(), AppError> {
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        let target:Uuid=sqlx::query_scalar("SELECT id FROM users WHERE username=$1 AND deleted_at IS NULL AND deactivated_at IS NULL AND suspended_at IS NULL").bind(username.as_str()).fetch_optional(&mut *tx).await.map_err(db_error)?.ok_or(AppError::NotFound)?;
+        if target == user.as_uuid() {
+            return Err(AppError::InvalidConversationRequest);
+        }
+        sqlx::query(
+            "INSERT INTO user_blocks(blocker_id,blocked_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
+        )
+        .bind(user.as_uuid())
+        .bind(target)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_error)?;
+        sqlx::query(
+            "DELETE FROM friendships WHERE user_low=LEAST($1,$2) AND user_high=GREATEST($1,$2)",
+        )
+        .bind(user.as_uuid())
+        .bind(target)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_error)?;
+        sqlx::query("DELETE FROM friend_requests WHERE (sender_id=$1 AND recipient_id=$2) OR (sender_id=$2 AND recipient_id=$1)").bind(user.as_uuid()).bind(target).execute(&mut *tx).await.map_err(db_error)?;
+        tx.commit().await.map_err(db_error)
+    }
+    async fn unblock(&self, user: UserId, blocked: UserId) -> Result<(), AppError> {
+        let r = sqlx::query("DELETE FROM user_blocks WHERE blocker_id=$1 AND blocked_id=$2")
+            .bind(user.as_uuid())
+            .bind(blocked.as_uuid())
+            .execute(&self.pool)
+            .await
+            .map_err(db_error)?;
+        if r.rows_affected() == 0 {
+            return Err(AppError::NotFound);
+        }
+        Ok(())
+    }
+}
+impl PgSocialRepository {
+    async fn remove_request(&self, user: UserId, id: Uuid, incoming: bool) -> Result<(), AppError> {
+        let owner = if incoming {
+            "recipient_id"
+        } else {
+            "sender_id"
+        };
+        let sql = format!("DELETE FROM friend_requests WHERE id=$1 AND {owner}=$2");
+        let r = sqlx::query(&sql)
+            .bind(id)
+            .bind(user.as_uuid())
+            .execute(&self.pool)
+            .await
+            .map_err(db_error)?;
+        if r.rows_affected() == 0 {
+            return Err(AppError::NotFound);
+        }
+        Ok(())
+    }
+}
+
 pub struct PgUserRepository {
     pool: PgPool,
 }
@@ -471,7 +650,7 @@ impl UserRepository for PgUserRepository {
         caller: UserId,
         username: &Username,
     ) -> Result<Option<User>, AppError> {
-        let row = sqlx::query("SELECT u.id, u.username, u.created_at FROM users u JOIN user_profiles p ON p.user_id = u.id WHERE u.deleted_at IS NULL AND u.deactivated_at IS NULL AND u.suspended_at IS NULL AND u.username = $2 AND (u.id = $1 OR p.discoverable OR EXISTS (SELECT 1 FROM conversation_members mine JOIN conversation_members theirs ON theirs.conversation_id = mine.conversation_id WHERE mine.user_id = $1 AND theirs.user_id = u.id))")
+        let row = sqlx::query("SELECT u.id, u.username, u.created_at FROM users u JOIN user_profiles p ON p.user_id = u.id WHERE u.deleted_at IS NULL AND u.deactivated_at IS NULL AND u.suspended_at IS NULL AND u.username = $2 AND (u.id = $1 OR p.discoverable OR EXISTS (SELECT 1 FROM conversation_members mine JOIN conversation_members theirs ON theirs.conversation_id = mine.conversation_id WHERE mine.user_id = $1 AND theirs.user_id = u.id)) AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$1 AND b.blocked_id=u.id) OR (b.blocker_id=u.id AND b.blocked_id=$1))")
             .bind(caller.as_uuid()).bind(username.as_str())
             .fetch_optional(&self.pool)
             .await
@@ -485,7 +664,7 @@ impl UserRepository for PgUserRepository {
         caller: UserId,
         username: &Username,
     ) -> Result<Option<UserProfile>, AppError> {
-        let row = sqlx::query("SELECT u.id, u.username, p.display_name, p.bio, p.updated_at FROM users u JOIN user_profiles p ON p.user_id = u.id WHERE u.deleted_at IS NULL AND u.deactivated_at IS NULL AND u.suspended_at IS NULL AND u.username = $2 AND (u.id = $1 OR (p.discoverable AND p.profile_visibility = 'everyone') OR (p.profile_visibility = 'conversation_members' AND EXISTS (SELECT 1 FROM conversation_members mine JOIN conversation_members theirs ON theirs.conversation_id = mine.conversation_id WHERE mine.user_id = $1 AND theirs.user_id = u.id)))")
+        let row = sqlx::query("SELECT u.id, u.username, p.display_name, p.bio, p.updated_at FROM users u JOIN user_profiles p ON p.user_id = u.id WHERE u.deleted_at IS NULL AND u.deactivated_at IS NULL AND u.suspended_at IS NULL AND u.username = $2 AND (u.id = $1 OR (p.discoverable AND p.profile_visibility = 'everyone') OR (p.profile_visibility = 'conversation_members' AND EXISTS (SELECT 1 FROM conversation_members mine JOIN conversation_members theirs ON theirs.conversation_id = mine.conversation_id WHERE mine.user_id = $1 AND theirs.user_id = u.id))) AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$1 AND b.blocked_id=u.id) OR (b.blocker_id=u.id AND b.blocked_id=$1))")
             .bind(caller.as_uuid()).bind(username.as_str()).fetch_optional(&self.pool).await.map_err(db_error)?;
         row.map(|row| {
             Ok(UserProfile {
@@ -1268,6 +1447,11 @@ impl ConversationRepository for PgConversationRepository {
         caller: UserId,
         target: UserId,
     ) -> Result<Conversation, AppError> {
+        let blocked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_blocks WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1))")
+            .bind(caller.as_uuid()).bind(target.as_uuid()).fetch_one(&self.pool).await.map_err(db_error)?;
+        if blocked {
+            return Err(AppError::NotFound);
+        }
         let a = caller.as_uuid();
         let b = target.as_uuid();
         let (low, high) = if a < b { (a, b) } else { (b, a) };
@@ -1306,6 +1490,12 @@ impl ConversationRepository for PgConversationRepository {
         let id = Uuid::now_v7();
         let now = OffsetDateTime::now_utc();
         let mut tx = self.pool.begin().await.map_err(db_error)?;
+        let member_ids: Vec<Uuid> = members.iter().map(|m| m.as_uuid()).collect();
+        let blocked_pair: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_blocks WHERE blocker_id=ANY($1) AND blocked_id=ANY($1))")
+            .bind(&member_ids).fetch_one(&mut *tx).await.map_err(db_error)?;
+        if blocked_pair {
+            return Err(AppError::NotFound);
+        }
         sqlx::query("INSERT INTO conversations (id, kind, name, created_by, created_at) VALUES ($1, 'group', $2, $3, $4)")
             .bind(id).bind(name.as_ref().map(ConversationName::as_str)).bind(creator.as_uuid()).bind(now).execute(&mut *tx).await.map_err(db_error)?;
         for member in members {
@@ -1338,6 +1528,11 @@ impl ConversationRepository for PgConversationRepository {
         }
         if kind != "group" {
             return Err(AppError::InvalidConversationRequest);
+        }
+        let blocked_pair: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_blocks b JOIN conversation_members cm ON cm.conversation_id=$1 AND cm.user_id=b.blocker_id WHERE b.blocked_id=$2) OR EXISTS(SELECT 1 FROM user_blocks b JOIN conversation_members cm ON cm.conversation_id=$1 AND cm.user_id=b.blocked_id WHERE b.blocker_id=$2)")
+            .bind(conversation.as_uuid()).bind(member.as_uuid()).fetch_one(&mut *tx).await.map_err(db_error)?;
+        if blocked_pair {
+            return Err(AppError::NotFound);
         }
         let count: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM conversation_members WHERE conversation_id = $1",
@@ -1508,7 +1703,7 @@ impl ConversationRepository for PgConversationRepository {
     }
 
     async fn share_conversation(&self, first: UserId, second: UserId) -> Result<bool, AppError> {
-        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM conversation_members a JOIN conversation_members b ON b.conversation_id = a.conversation_id WHERE a.user_id = $1 AND b.user_id = $2)")
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM conversation_members a JOIN conversation_members b ON b.conversation_id = a.conversation_id WHERE a.user_id = $1 AND b.user_id = $2) AND NOT EXISTS (SELECT 1 FROM user_blocks WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1))")
             .bind(first.as_uuid()).bind(second.as_uuid()).fetch_one(&self.pool).await.map_err(db_error)
     }
 }
@@ -2570,7 +2765,7 @@ impl MessageRepository for PgMessageRepository {
             }
         };
         let mut tx = self.pool.begin().await.map_err(db_error)?;
-        let allowed = sqlx::query("SELECT c.id FROM conversations c JOIN conversation_members cm ON cm.conversation_id = c.id AND cm.user_id = $2 WHERE c.id = $1 AND NOT EXISTS (SELECT 1 FROM community_channels ch WHERE ch.conversation_id = c.id AND (ch.read_only OR NOT channel_has_permission($2, ch.id, 65))) FOR UPDATE OF c")
+        let allowed = sqlx::query("SELECT c.id FROM conversations c JOIN conversation_members cm ON cm.conversation_id = c.id AND cm.user_id = $2 WHERE c.id = $1 AND NOT EXISTS (SELECT 1 FROM community_channels ch WHERE ch.conversation_id = c.id AND (ch.read_only OR NOT channel_has_permission($2, ch.id, 65))) AND NOT EXISTS (SELECT 1 FROM conversations d JOIN conversation_members other ON other.conversation_id=d.id AND other.user_id<>$2 JOIN user_blocks b ON ((b.blocker_id=$2 AND b.blocked_id=other.user_id) OR (b.blocker_id=other.user_id AND b.blocked_id=$2)) WHERE d.id=$1 AND d.kind='direct') FOR UPDATE OF c")
             .bind(conversation.as_uuid()).bind(caller.as_uuid()).fetch_optional(&mut *tx).await.map_err(db_error)?;
         if allowed.is_none() {
             return Err(AppError::NotFound);
@@ -3197,6 +3392,60 @@ impl AttachmentRepository for PgAttachmentRepository {
             row.try_get("upload_key").map_err(db_error)?,
             row.try_get("storage_key").map_err(db_error)?,
         ))
+    }
+
+    async fn claim_expired_pending_uploads(
+        &self,
+        now: OffsetDateTime,
+        limit: usize,
+    ) -> Result<Vec<rustchat_application::ports::ExpiredAttachmentUpload>, AppError> {
+        let limit = i64::try_from(limit.clamp(1, 500)).unwrap_or(500);
+        let rows = sqlx::query("WITH candidates AS (SELECT id FROM message_attachments WHERE state='pending' AND expires_at <= $1 ORDER BY expires_at,id FOR UPDATE SKIP LOCKED LIMIT $2) UPDATE message_attachments a SET state='deleting' FROM candidates c WHERE a.id=c.id RETURNING a.id,a.upload_key,a.storage_key")
+            .bind(now)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db_error)?;
+        rows.iter()
+            .map(|row| {
+                Ok(rustchat_application::ports::ExpiredAttachmentUpload {
+                    id: AttachmentId::from_uuid(row.try_get("id").map_err(db_error)?),
+                    upload_key: row.try_get("upload_key").map_err(db_error)?,
+                    storage_key: row.try_get("storage_key").map_err(db_error)?,
+                })
+            })
+            .collect()
+    }
+
+    async fn release_expired_pending_uploads(&self, ids: &[AttachmentId]) -> Result<(), AppError> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        sqlx::query(
+            "UPDATE message_attachments SET state='pending' WHERE id=ANY($1) AND state='deleting'",
+        )
+        .bind(ids.iter().map(AttachmentId::as_uuid).collect::<Vec<_>>())
+        .execute(&self.pool)
+        .await
+        .map_err(db_error)?;
+        Ok(())
+    }
+
+    async fn purge_expired_pending_uploads(
+        &self,
+        ids: &[AttachmentId],
+        now: OffsetDateTime,
+    ) -> Result<u64, AppError> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        sqlx::query("DELETE FROM message_attachments WHERE id = ANY($1) AND state = 'deleting' AND expires_at <= $2")
+            .bind(ids.iter().map(AttachmentId::as_uuid).collect::<Vec<_>>())
+            .bind(now)
+            .execute(&self.pool)
+            .await
+            .map(|result| result.rows_affected())
+            .map_err(db_error)
     }
 }
 

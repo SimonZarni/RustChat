@@ -8,6 +8,7 @@ pub mod error;
 pub mod messages;
 pub mod ports;
 pub mod ratelimit;
+pub mod social;
 
 #[cfg(test)]
 mod testing;

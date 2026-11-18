@@ -195,4 +195,39 @@ impl AttachmentService {
                 + time::Duration::seconds(URL_TTL.as_secs() as i64),
         })
     }
+
+    /// Remove expired pending objects before deleting their database reservations.
+    /// Failed object deletes leave the row available for the next scheduled pass.
+    pub async fn cleanup_expired_uploads(&self) -> Result<u64, AppError> {
+        const BATCH_SIZE: usize = 100;
+        let now = time::OffsetDateTime::now_utc();
+        let expired = self
+            .repository
+            .claim_expired_pending_uploads(now, BATCH_SIZE)
+            .await?;
+        let mut removed = Vec::with_capacity(expired.len());
+        let mut retry = Vec::new();
+        for item in expired {
+            let upload_deleted = self.storage.delete(&item.upload_key).await;
+            let final_deleted = self.storage.delete(&item.storage_key).await;
+            match (upload_deleted, final_deleted) {
+                (Ok(()), Ok(())) => removed.push(item.id),
+                (upload, final_object) => {
+                    retry.push(item.id);
+                    tracing::warn!(
+                        attachment_id = %item.id.as_uuid(),
+                        upload_delete_failed = upload.is_err(),
+                        final_delete_failed = final_object.is_err(),
+                        "could not clean an expired attachment upload; it will be retried"
+                    );
+                }
+            }
+        }
+        self.repository
+            .release_expired_pending_uploads(&retry)
+            .await?;
+        self.repository
+            .purge_expired_pending_uploads(&removed, now)
+            .await
+    }
 }

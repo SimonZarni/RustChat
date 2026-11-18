@@ -310,6 +310,38 @@ pub trait UserRepository: Send + Sync {
     ) -> Result<AdminUser, AppError>;
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SocialUser {
+    pub id: uuid::Uuid,
+    pub username: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FriendRequest {
+    pub id: uuid::Uuid,
+    pub user: SocialUser,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+}
+
+#[async_trait]
+pub trait SocialRepository: Send + Sync {
+    async fn requests(&self, user: UserId, incoming: bool) -> Result<Vec<FriendRequest>, AppError>;
+    async fn friends(&self, user: UserId) -> Result<Vec<SocialUser>, AppError>;
+    async fn blocks(&self, user: UserId) -> Result<Vec<SocialUser>, AppError>;
+    async fn send_request(
+        &self,
+        sender: UserId,
+        username: &Username,
+    ) -> Result<uuid::Uuid, AppError>;
+    async fn accept_request(&self, user: UserId, request: uuid::Uuid) -> Result<(), AppError>;
+    async fn reject_request(&self, user: UserId, request: uuid::Uuid) -> Result<(), AppError>;
+    async fn cancel_request(&self, user: UserId, request: uuid::Uuid) -> Result<(), AppError>;
+    async fn remove_friend(&self, user: UserId, friend: UserId) -> Result<(), AppError>;
+    async fn block(&self, user: UserId, username: &Username) -> Result<(), AppError>;
+    async fn unblock(&self, user: UserId, blocked: UserId) -> Result<(), AppError>;
+}
+
 #[async_trait]
 pub trait ConversationRepository: Send + Sync {
     async fn create_or_get_direct(
@@ -505,6 +537,24 @@ pub trait AttachmentRepository: Send + Sync {
         caller: UserId,
         attachment: AttachmentId,
     ) -> Result<(String, String), AppError>;
+    async fn claim_expired_pending_uploads(
+        &self,
+        now: OffsetDateTime,
+        limit: usize,
+    ) -> Result<Vec<ExpiredAttachmentUpload>, AppError>;
+    async fn release_expired_pending_uploads(&self, ids: &[AttachmentId]) -> Result<(), AppError>;
+    async fn purge_expired_pending_uploads(
+        &self,
+        ids: &[AttachmentId],
+        now: OffsetDateTime,
+    ) -> Result<u64, AppError>;
+}
+
+#[derive(Debug, Clone)]
+pub struct ExpiredAttachmentUpload {
+    pub id: AttachmentId,
+    pub upload_key: String,
+    pub storage_key: String,
 }
 
 #[async_trait]

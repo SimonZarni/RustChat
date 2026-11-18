@@ -193,6 +193,11 @@ impl IntoResponse for ApiError {
                     "INVALID_CONVERSATION",
                     "The conversation request is invalid.",
                 ),
+                AppError::SocialConflict => body(
+                    StatusCode::CONFLICT,
+                    "SOCIAL_CONFLICT",
+                    "That relationship action conflicts with the current state.",
+                ),
                 AppError::ConversationMemberLimit => body(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "MEMBER_LIMIT",

@@ -57,6 +57,8 @@ pub enum AppError {
     InvalidMfaCode,
     #[error("conversation request is invalid")]
     InvalidConversationRequest,
+    #[error("social operation conflicts with the current relationship state")]
+    SocialConflict,
     #[error("conversation member limit reached")]
     ConversationMemberLimit,
     #[error("invalid group name: {0}")]

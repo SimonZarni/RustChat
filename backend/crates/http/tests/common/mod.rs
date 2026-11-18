@@ -18,6 +18,7 @@ use rustchat_application::{
     messages::{MessageConfig, MessageService},
     ports::RateLimitRule,
     ratelimit::{ApiRateLimitConfig, ApiRateLimiter, RateLimitConfig},
+    social::SocialService,
 };
 use rustchat_http::{AppEvents, AppState, ClientIpSource, HttpConfig, cluster, router};
 use rustchat_infrastructure::{
@@ -25,7 +26,7 @@ use rustchat_infrastructure::{
     mfa::AesGcmTotpEngine,
     postgres::{
         PgCommunityRepository, PgConversationRepository, PgMessageRepository, PgMfaRepository,
-        PgOutboxRepository, PgSessionRepository, PgUserRepository,
+        PgOutboxRepository, PgSessionRepository, PgSocialRepository, PgUserRepository,
     },
     ratelimit::InMemoryRateLimiter,
     security::{Argon2Hasher, OsTokenService, SystemClock},
@@ -202,7 +203,10 @@ pub fn node(pool: PgPool, options: Options) -> Node {
             session_ttl,
             client_ip: options.client_ip,
         },
-    );
+    )
+    .with_social(Arc::new(SocialService::new(Arc::new(
+        PgSocialRepository::new(pool.clone()),
+    ))));
     if let Some(limits) = options.api_limits {
         state = state.with_api_rate_limiter(Arc::new(ApiRateLimiter::new(
             Arc::new(InMemoryRateLimiter::new()),

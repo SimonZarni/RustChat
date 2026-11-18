@@ -46,9 +46,9 @@ async fn uploads_attaches_and_authorizes_downloads(pool: PgPool) {
         },
     ));
     let api = app(
-        pool,
+        pool.clone(),
         Options {
-            attachments: Some(service),
+            attachments: Some(service.clone()),
             ..Options::default()
         },
     );
@@ -150,6 +150,41 @@ async fn uploads_attaches_and_authorizes_downloads(pool: PgPool) {
             .windows(PNG_SIGNATURE.len())
             .any(|window| window == PNG_SIGNATURE)
     );
+
+    let expired = call(
+        &api,
+        Method::POST,
+        &format!("/api/v1/conversations/{conversation_id}/attachments"),
+        Some(json!({"file_name":"expired.png", "content_type":"image/png", "byte_size":PNG_SIGNATURE.len()})),
+        Some(&alice_cookie),
+    )
+    .await;
+    assert_eq!(expired.status, StatusCode::CREATED, "{:?}", expired.json);
+    let expired_id = expired.json["attachment_id"].as_str().unwrap();
+    let expired_upload = raw_http(
+        expired.json["upload_url"].as_str().unwrap(),
+        "PUT",
+        Some(("image/png", PNG_SIGNATURE)),
+    )
+    .await;
+    assert!(expired_upload.starts_with(b"HTTP/1.1 200"));
+    sqlx::query(
+        "UPDATE message_attachments SET expires_at = now() - interval '1 second' WHERE id = $1",
+    )
+    .bind(Uuid::parse_str(expired_id).unwrap())
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(service.cleanup_expired_uploads().await.unwrap(), 1);
+    let expired_completion = call(
+        &api,
+        Method::POST,
+        &format!("/api/v1/attachments/{expired_id}/complete"),
+        None,
+        Some(&alice_cookie),
+    )
+    .await;
+    assert_eq!(expired_completion.status, StatusCode::NOT_FOUND);
 }
 
 async fn raw_http(url: &str, method: &str, upload: Option<(&str, &[u8])>) -> Vec<u8> {

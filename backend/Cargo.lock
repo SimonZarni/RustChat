@@ -2095,11 +2095,13 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "rustchat-domain",
+ "serde",
  "serde_json",
  "thiserror",
  "time",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

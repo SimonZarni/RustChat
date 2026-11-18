@@ -11,6 +11,7 @@ mod error;
 mod messages;
 mod presence;
 mod realtime;
+mod social;
 
 use std::future::Future;
 use std::sync::{
@@ -76,6 +77,7 @@ pub struct AppState {
     pub(crate) conversations: Arc<rustchat_application::conversations::ConversationService>,
     pub(crate) messages: Arc<MessageService>,
     pub(crate) attachments: Option<Arc<rustchat_application::attachments::AttachmentService>>,
+    pub(crate) social: Option<Arc<rustchat_application::social::SocialService>>,
     pub(crate) communities: Arc<rustchat_application::communities::CommunityService>,
     pub(crate) events: broadcast::Sender<Message>,
     pub(crate) typing_events: broadcast::Sender<TypingEvent>,
@@ -120,6 +122,7 @@ impl AppState {
             conversations,
             messages,
             attachments: None,
+            social: None,
             communities,
             events: events.messages,
             typing_events: events.typing,
@@ -212,6 +215,11 @@ impl AppState {
         self
     }
 
+    pub fn with_social(mut self, social: Arc<rustchat_application::social::SocialService>) -> Self {
+        self.social = Some(social);
+        self
+    }
+
     pub fn with_readiness_probe<F, Fut>(mut self, probe: F) -> Self
     where
         F: Fn() -> Fut + Send + Sync + 'static,
@@ -291,6 +299,26 @@ pub fn router(state: AppState) -> Router {
             "/conversations",
             post(conversations::create).get(conversations::list),
         )
+        .route("/friends", get(social::friends))
+        .route(
+            "/friend-requests",
+            get(social::requests).post(social::send_request),
+        )
+        .route(
+            "/friend-requests/{request_id}/accept",
+            post(social::accept_request),
+        )
+        .route(
+            "/friend-requests/{request_id}/reject",
+            post(social::reject_request),
+        )
+        .route(
+            "/friend-requests/{request_id}",
+            delete(social::cancel_request),
+        )
+        .route("/friends/{user_id}", delete(social::remove_friend))
+        .route("/blocks", get(social::blocks).post(social::block))
+        .route("/blocks/{user_id}", delete(social::unblock))
         .route("/conversations/{conversation_id}", get(conversations::get))
         .route(
             "/conversations/{conversation_id}/members",

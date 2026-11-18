@@ -72,9 +72,9 @@ For desktop clients, store credentials using supported operating-system secure s
 
 - The implemented upload flow enforces a configurable per-file limit (25 MiB by default, maximum 100 MiB) and per-user ready-file quota (2 GiB by default). The API checks conversation membership and message association; download URLs are issued only to current members.
 - The client MIME type is checked against a supported set and content signatures are inspected on completion. Files are stored under generated opaque keys, never their supplied filenames. Downloads are forced as attachments with `application/octet-stream`; inline preview and malware scanning are not implemented.
-- Upload and download URLs are short-lived bearer credentials. Uploads first target a staging key; completion checks the object size and signature before promoting it to a final key. A browser may still use an issued staging URL until it expires, even after the client cancels. Operators must configure object-store lifecycle cleanup for the staging prefix and expired pending rows; automated database/object cleanup is not yet implemented.
+- Upload and download URLs are short-lived bearer credentials. Uploads first target a staging key; completion checks the object size and signature before promoting it to a final key. A browser may still use an issued staging URL until it expires, even after the client cancels. The server claims expired pending rows every minute, deletes staging and final objects, and purges metadata only after both deletes succeed. Failed deletions are retried; configure object-store lifecycle cleanup for the staging prefix as a secondary safeguard.
 - Keep the S3-compatible bucket private, limit credentials to the application bucket, and configure CORS only for the exact RustChat web origin and required `PUT`/`GET` methods and headers. The signed object-store endpoint is browser-facing and must use HTTPS in secure-cookie deployments.
-- Object storage is separate from PostgreSQL. Backups and restores must include the object store and preserve consistency with database metadata; the current backup scripts cover PostgreSQL only.
+- Object storage is separate from PostgreSQL. `backup-full.ps1` and `restore-full.ps1` stop the server and coordinate bucket and database snapshots. Restore requires an empty bucket and leaves the API stopped if either half fails. The S3 copy/restore flow was checked against local Garage; production-provider recovery still requires an operator rehearsal.
 
 ## 9. Encryption in transit and at rest
 
@@ -114,6 +114,7 @@ At minimum, consider:
 - SQL injection and unsafe query construction.
 - XSS and CSRF.
 - IDOR/BOLA and privilege escalation.
+- Friend request ownership and block bypass through profile, presence, direct-message, and group-member entry points.
 - WebSocket hijacking and unauthorized subscriptions.
 - Replay and duplicate operations.
 - Malicious uploads and unsafe previews.

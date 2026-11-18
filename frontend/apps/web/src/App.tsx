@@ -7,6 +7,7 @@ import { CommunitySection } from './features/communities/CommunitySection'
 import { useCommunities } from './features/communities/useCommunities'
 import { ConversationList } from './features/conversations/ConversationList'
 import { NewConversationDialog } from './features/conversations/NewConversationDialog'
+import { PeopleDialog } from './features/social/PeopleDialog'
 import { ChatPanel } from './features/messages/ChatPanel'
 import { useConversation } from './features/messages/useConversation'
 import { useRealtime } from './features/realtime/useRealtime'
@@ -31,6 +32,7 @@ function Shell() {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [showNewConversation, setShowNewConversation] = useState(false)
+  const [showPeople, setShowPeople] = useState(false)
   const [mobileList, setMobileList] = useState(true)
   const socketRef = useRef<WebSocket | null>(null)
 
@@ -129,6 +131,7 @@ function Shell() {
           <button className="new-button" onClick={() => setShowNewConversation(true)} aria-label="New conversation" title="New conversation">+</button>
         </header>
         <div className="sidebar-search"><span aria-hidden="true">⌕</span><span>Conversations</span><kbd>{conversationShortcut}</kbd></div>
+        <button className="people-entry" onClick={() => setShowPeople(true)}><span aria-hidden="true">◎</span> Friends &amp; blocked</button>
         <CommunitySection
           state={communities} user={user} activeId={activeId} onOpenConversation={openConversation}
           onClearActive={() => setActiveId(null)} onChannelDeleted={(id) => setActiveId((current) => current === id ? null : current)} onError={setError}
@@ -157,6 +160,7 @@ function Shell() {
           onCreated={(created) => { setConversations((current) => [created, ...current.filter((item) => item.id !== created.id)]); openConversation(created.id) }}
         />
       )}
+      {showPeople && <PeopleDialog onClose={() => setShowPeople(false)} onError={setError} />}
     </main>
   )
 }
