@@ -1,5 +1,6 @@
 //! RustChat application layer: use cases and the ports they depend on.
 
+pub mod attachments;
 pub mod auth;
 pub mod communities;
 pub mod conversations;

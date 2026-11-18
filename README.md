@@ -10,6 +10,8 @@ The project is intended to provide direct messaging, group conversations, commun
 
 See the [Phase Completion Audit](docs/PHASE_STATUS.md) for the reviewed Phase 0/1 feature inventory, outstanding P0 requirements and checks run.
 
+Phase 2 has started: the initial attachment path is implemented, including private object storage integration, scoped signed upload/download URLs, message association, and browser progress/cancel UI. Storage remains optional and requires an operator-provisioned S3-compatible bucket; see [deployment configuration](docs/DEPLOYMENT.md). Malware scanning, inline previews, and object-store backup/recovery are not implemented yet.
+
 The technology stack describes the intended direction. It does not imply that every listed feature or integration has already been implemented. Update this section as working functionality becomes available.
 
 ## Core principles
@@ -25,7 +27,7 @@ The technology stack describes the intended direction. It does not imply that ev
 
 ## Technology stack
 
-The lists below are the intended stack. The current frontend uses React, TypeScript, Vite, plain CSS, and React state with `fetch`, and does not yet use Tailwind CSS, shadcn/ui, TanStack Query, Zustand, Zod or MSW. Valkey, Garage, LiveKit and Tauri are not implemented; see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The lists below are the intended stack. The current frontend uses React, TypeScript, Vite, plain CSS, and React state with `fetch`, and does not yet use Tailwind CSS, shadcn/ui, TanStack Query, Zustand, Zod or MSW. Valkey, LiveKit and Tauri are not implemented; Garage is selected but not bundled or provisioned by Compose. See [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ### Backend
 - Rust, Tokio and Axum
@@ -33,7 +35,7 @@ The lists below are the intended stack. The current frontend uses React, TypeScr
 - PostgreSQL
 - Valkey
 - WebSockets
-- Garage (S3-compatible) for object storage
+- S3-compatible object storage via AWS Rust SDK (Garage selected)
 - LiveKit for voice/media
 
 ### Frontend

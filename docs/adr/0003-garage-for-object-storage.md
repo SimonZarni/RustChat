@@ -1,6 +1,6 @@
 # 0003. Garage for object storage
 
-- **Status:** Accepted (not yet implemented; attachments are Phase 2)
+- **Status:** Accepted; S3-compatible adapter and initial attachment flow implemented; Garage deployment remains operator-provisioned
 - **Date:** 2026-11-14
 
 ## Context

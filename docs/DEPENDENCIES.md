@@ -2,7 +2,7 @@
 
 Required by [CLAUDE.md](../CLAUDE.md) section 7. Update this file whenever a dependency is added, removed or upgraded across a major version.
 
-**Status:** reviewed against the current lockfiles and package metadata on 2026-11-16. Metadata is the package author's declared licence expression; this inventory is not a legal review.
+**Status:** reviewed against the current lockfiles and package metadata on 2026-11-17. Metadata is the package author's declared licence expression; this inventory is not a legal review.
 
 **Automated checks.** CI runs `cargo deny check` (policy in `backend/deny.toml`: permissive licences only, crates.io as the only source, RustSec advisories, no wildcard versions), `cargo audit` and `pnpm audit --audit-level moderate` on pushes to `main`, pull requests, and weekly. `cargo audit` scans every package in `Cargo.lock` and reports two ignored advisories (RUSTSEC-2026-0459 for `libsqlite3-sys`, RUSTSEC-2023-0071 for `rsa`). Both crates belong to sqlx's optional SQLite and MySQL drivers, which appear in the lockfile but are not in the build graph for any target or feature set (verified with `cargo tree --all-features --target all -i`), so they do not affect RustChat. They are ignored in `backend/.cargo/audit.toml` with the reasons written down, and a CI step fails if any of those crates ever enters the real build graph. Remove the ignores when sqlx stops listing the drivers. Exact versions are pinned in `backend/Cargo.lock` and `frontend/pnpm-lock.yaml`.
 
@@ -33,6 +33,7 @@ Selected direct dependencies:
 | `totp-rs` | MIT | RFC 6238 time-based one-time passwords for two-step verification (default features off; `otpauth` for provisioning URIs) |
 | `aes-gcm` | Apache-2.0 OR MIT | AES-256-GCM sealing of stored authenticator secrets (RustCrypto) |
 | `tokio-tungstenite` (HTTP dev dependency) | MIT | Real WebSocket API integration tests |
+| `aws-sdk-s3` | Apache-2.0 | S3-compatible attachment upload/download signing and object operations (Rust 1.94.1 minimum) |
 
 No custom cryptography is implemented; hashing and randomness come from maintained RustCrypto and OS facilities.
 
@@ -48,10 +49,10 @@ Licences in this table are stated from general knowledge and have **not** been v
 |---|---|---|
 | PostgreSQL 17 and 18 (container images) | PostgreSQL Licence | Supported versions; 18 is the default in the Compose files and 17 is tested in CI |
 | Valkey 9 (container image) | BSD-3-Clause | Started by the dev compose file; not used by the backend yet |
-| Garage | AGPL-3.0 | Planned for attachments (Phase 2). Run as an unmodified, separate service, AGPL does not extend to RustChat's own code; confirm this and record the decision before adoption |
+| Garage | AGPL-3.0 (verify against selected release) | Selected S3-compatible backend for attachments; not bundled or automatically provisioned. Verify the exact release licence before deployment |
 | LiveKit | Apache-2.0 | Planned for voice (Phase 2) |
 
 ## Follow-up
 
-- Re-check the Garage (AGPL-3.0) decision before Phase 2. The project licence is Apache-2.0 (ADR 0007); running Garage as a separate service does not change it.
+- Verify Garage's exact release licence and operational configuration before deploying it; the backend adapter supports the S3-compatible API, but this repository does not bundle Garage.
 - Add TLS support to the SQLx connection before any database is reached over an untrusted network.

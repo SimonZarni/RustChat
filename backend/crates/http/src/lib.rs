@@ -1,6 +1,7 @@
 //! HTTP adapter: translates HTTP requests into application operations.
 
 mod admin;
+pub(crate) mod attachments;
 mod auth;
 mod client_ip;
 pub mod cluster;
@@ -74,6 +75,7 @@ pub struct AppState {
     pub(crate) api_limits: Option<Arc<rustchat_application::ratelimit::ApiRateLimiter>>,
     pub(crate) conversations: Arc<rustchat_application::conversations::ConversationService>,
     pub(crate) messages: Arc<MessageService>,
+    pub(crate) attachments: Option<Arc<rustchat_application::attachments::AttachmentService>>,
     pub(crate) communities: Arc<rustchat_application::communities::CommunityService>,
     pub(crate) events: broadcast::Sender<Message>,
     pub(crate) typing_events: broadcast::Sender<TypingEvent>,
@@ -117,6 +119,7 @@ impl AppState {
             api_limits: None,
             conversations,
             messages,
+            attachments: None,
             communities,
             events: events.messages,
             typing_events: events.typing,
@@ -198,6 +201,14 @@ impl AppState {
         limiter: Arc<rustchat_application::ratelimit::ApiRateLimiter>,
     ) -> Self {
         self.api_limits = Some(limiter);
+        self
+    }
+
+    pub fn with_attachments(
+        mut self,
+        attachments: Arc<rustchat_application::attachments::AttachmentService>,
+    ) -> Self {
+        self.attachments = Some(attachments);
         self
     }
 
@@ -288,6 +299,23 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/conversations/{conversation_id}/messages",
             post(messages::send).get(messages::list),
+        )
+        .route(
+            "/conversations/{conversation_id}/attachments",
+            post(attachments::reserve),
+        )
+        .route(
+            "/attachments/{attachment_id}/complete",
+            post(attachments::complete),
+        )
+        .route("/attachments/{attachment_id}", delete(attachments::cancel))
+        .route(
+            "/attachments/{attachment_id}/download",
+            get(attachments::download),
+        )
+        .route(
+            "/conversations/{conversation_id}/messages/{message_id}/attachments",
+            get(attachments::list_for_message).post(attachments::link_to_message),
         )
         .route(
             "/conversations/{conversation_id}/messages/{message_id}",

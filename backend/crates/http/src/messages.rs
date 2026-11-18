@@ -23,6 +23,8 @@ pub struct SendMessage {
     client_message_id: Uuid,
     reply_to_message_id: Option<Uuid>,
     content: String,
+    #[serde(default)]
+    attachment_ids: Vec<Uuid>,
 }
 
 #[derive(Deserialize)]
@@ -312,6 +314,7 @@ pub struct MessageDto {
     edited_at: Option<time::OffsetDateTime>,
     #[serde(with = "time::serde::rfc3339::option")]
     deleted_at: Option<time::OffsetDateTime>,
+    attachments: Vec<crate::attachments::AttachmentDto>,
 }
 
 impl From<Message> for MessageDto {
@@ -332,6 +335,7 @@ impl From<Message> for MessageDto {
             created_at: message.created_at,
             edited_at: message.edited_at,
             deleted_at: message.deleted_at,
+            attachments: Vec::new(),
         }
     }
 }
@@ -354,20 +358,35 @@ pub async fn send(
     ApiJson(body): ApiJson<SendMessage>,
 ) -> Result<(StatusCode, Json<MessageEnvelope>), ApiError> {
     let conversation_id = parse_id(&raw)?;
+    let attachments = body
+        .attachment_ids
+        .into_iter()
+        .map(rustchat_domain::identity::AttachmentId::from_uuid)
+        .collect::<Vec<_>>();
     let message = state
         .messages
-        .send(
+        .send_with_attachments(
             auth.user.id,
             conversation_id,
             MessageId::from_uuid(body.client_message_id),
             body.reply_to_message_id.map(MessageId::from_uuid),
             body.content,
+            attachments,
         )
         .await?;
+    let mut message_dto = MessageDto::from(message.clone());
+    if let Some(attachments) = &state.attachments {
+        message_dto.attachments = attachments
+            .list_for_messages(auth.user.id, conversation_id, &[message.id])
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect();
+    }
     Ok((
         StatusCode::CREATED,
         Json(MessageEnvelope {
-            message: message.into(),
+            message: message_dto,
         }),
     ))
 }
@@ -394,8 +413,40 @@ pub async fn list(
             query.limit.unwrap_or(50),
         )
         .await?;
+    let message_ids = page
+        .messages
+        .iter()
+        .map(|message| message.id)
+        .collect::<Vec<_>>();
+    let attachments = if let Some(service) = &state.attachments {
+        service
+            .list_for_messages(auth.user.id, parse_id(&raw)?, &message_ids)
+            .await?
+    } else {
+        Vec::new()
+    };
+    let mut by_message =
+        std::collections::HashMap::<Uuid, Vec<crate::attachments::AttachmentDto>>::new();
+    for attachment in attachments {
+        if let Some(message_id) = attachment.message_id {
+            by_message
+                .entry(message_id.as_uuid())
+                .or_default()
+                .push(attachment.into());
+        }
+    }
+    let messages = page
+        .messages
+        .into_iter()
+        .map(|message| {
+            let id = message.id.as_uuid();
+            let mut dto = MessageDto::from(message);
+            dto.attachments = by_message.remove(&id).unwrap_or_default();
+            dto
+        })
+        .collect();
     Ok(Json(MessagesEnvelope {
-        messages: page.messages.into_iter().map(Into::into).collect(),
+        messages,
         next_before: page.next_before,
         next_after: page.next_after,
     }))
@@ -453,7 +504,7 @@ fn parse_message_id(raw: &str) -> Result<MessageId, ApiError> {
         .map_err(|_| ApiError::BadRequest(StatusCode::BAD_REQUEST))
 }
 
-fn parse_id(raw: &str) -> Result<ConversationId, ApiError> {
+pub(crate) fn parse_id(raw: &str) -> Result<ConversationId, ApiError> {
     Uuid::parse_str(raw)
         .map(ConversationId::from_uuid)
         .map_err(|_| ApiError::BadRequest(StatusCode::BAD_REQUEST))

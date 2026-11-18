@@ -70,14 +70,11 @@ For desktop clients, store credentials using supported operating-system secure s
 
 ## 8. File and attachment security
 
-- Enforce upload size and rate limits.
-- Do not trust filename extensions or client-supplied MIME types.
-- Inspect file content and use safe storage names.
-- Store files outside executable application paths.
-- Use short-lived, scoped upload/download authorization.
-- Restrict access to private attachments.
-- Consider malware scanning and safe preview generation.
-- Stream data instead of buffering whole files in application memory.
+- The implemented upload flow enforces a configurable per-file limit (25 MiB by default, maximum 100 MiB) and per-user ready-file quota (2 GiB by default). The API checks conversation membership and message association; download URLs are issued only to current members.
+- The client MIME type is checked against a supported set and content signatures are inspected on completion. Files are stored under generated opaque keys, never their supplied filenames. Downloads are forced as attachments with `application/octet-stream`; inline preview and malware scanning are not implemented.
+- Upload and download URLs are short-lived bearer credentials. Uploads first target a staging key; completion checks the object size and signature before promoting it to a final key. A browser may still use an issued staging URL until it expires, even after the client cancels. Operators must configure object-store lifecycle cleanup for the staging prefix and expired pending rows; automated database/object cleanup is not yet implemented.
+- Keep the S3-compatible bucket private, limit credentials to the application bucket, and configure CORS only for the exact RustChat web origin and required `PUT`/`GET` methods and headers. The signed object-store endpoint is browser-facing and must use HTTPS in secure-cookie deployments.
+- Object storage is separate from PostgreSQL. Backups and restores must include the object store and preserve consistency with database metadata; the current backup scripts cover PostgreSQL only.
 
 ## 9. Encryption in transit and at rest
 

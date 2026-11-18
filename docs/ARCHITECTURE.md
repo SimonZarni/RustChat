@@ -2,7 +2,7 @@
 
 ## 1. Purpose and status
 
-This document describes the intended high-level architecture and current implementation of RustChat. Phase 0 is complete. Phase 1 implementation includes identity, editable profiles and privacy-scoped presence, authenticated password change, account lifecycle, PostgreSQL-shared authentication rate limits, conversations, communities, channels and permissions, durable messaging, emoji reactions, read and delivery cursors, WebSocket delivery (shared across server instances) for messages, presence, typing, reactions, delivery cursors, and community-scoped member/channel invalidations, plus the initial web client and instance administration. Screen-reader review remains outstanding; operational validation beyond the local deployment rehearsal is follow-up work. Later sections distinguish implemented components from planned architecture; verify details against the code and API documentation.
+This document describes the intended high-level architecture and current implementation of RustChat. Phase 0 is complete. Phase 1 implementation includes identity, editable profiles and privacy-scoped presence, authenticated password change, account lifecycle, PostgreSQL-shared authentication rate limits, conversations, communities, channels and permissions, durable messaging, emoji reactions, read and delivery cursors, WebSocket delivery (shared across server instances) for messages, presence, typing, reactions, delivery cursors, and community-scoped member/channel invalidations, plus the initial web client and instance administration. Phase 2 has begun with an initial attachment upload, message association and authorized-download path backed by an optional S3-compatible adapter. Screen-reader review remains outstanding; object-store deployment and recovery have not been validated. Later sections distinguish implemented components from planned architecture; verify details against the code and API documentation.
 
 RustChat is a self-hostable real-time communication platform with a Rust backend and a shared React frontend for web and desktop.
 
@@ -30,7 +30,7 @@ flowchart TB
     WORKER[Background Workers]
     DB[(PostgreSQL)]
     CACHE[(Valkey · future)]
-    STORE[(Garage · Phase 2)]
+    STORE[(S3-compatible object storage)]
     MEDIA[LiveKit · Phase 2]
 
     WEB --> PROXY
@@ -41,7 +41,7 @@ flowchart TB
     WS --> APP
     APP --> DB
     APP -. future .-> CACHE
-    APP -. future .-> STORE
+    APP --> STORE
     WORKER --> DB
     WORKER --> CACHE
     WEB -. Phase 2 .-> MEDIA
@@ -66,7 +66,7 @@ The RustChat application initially runs as a modular monolith. HTTP handling, We
 | UI styling | CSS |
 | Server state | React component state and fetch |
 | Local UI state | React component state |
-| Object storage | Garage (S3-compatible), planned for Phase 2 |
+| Object storage | Optional S3-compatible storage behind an application port; AWS Rust SDK adapter implemented, Garage selected but not bundled |
 | Voice/media | Self-hosted LiveKit, planned for Phase 2 |
 | Reverse proxy | Caddy |
 | Deployment | Docker Engine + Docker Compose |
@@ -215,7 +215,7 @@ Each server instance claims pending PostgreSQL outbox rows with a short lease, p
 
 - PostgreSQL is the source of truth for persistent application data.
 - Valkey is a possible future cache and ephemeral coordination service; it is currently unused.
-- Garage (accessed through its S3-compatible API) is planned for attachments and object storage.
+- Attachments use an optional S3-compatible storage adapter (AWS Rust SDK). Garage is the selected backend, but operators must provision the private bucket and configure browser CORS; Compose does not start Garage.
 - LiveKit is planned for voice/media; RustChat would remain responsible for authorization and issuing short-lived room credentials.
 - Caddy terminates HTTPS and routes HTTP/WebSocket traffic.
 - Docker Compose provides an approachable self-hosted deployment.
@@ -237,7 +237,7 @@ Track latency percentiles, memory per connection, allocation behavior, database 
 
 ## 11. Scaling strategy
 
-**Current:** one RustChat server with PostgreSQL, the web client and Caddy. Development Compose also starts Valkey, which the application does not use. Object storage and LiveKit are planned for later phases.
+**Current:** one RustChat server with PostgreSQL, the web client and Caddy. Development Compose also starts Valkey, which the application does not use. The initial attachment path is implemented and requires a separately provisioned S3-compatible store; LiveKit remains planned.
 
 **Growth:** multiple API/WebSocket instances, shared persistence and coordination, separate worker processes if needed.
 

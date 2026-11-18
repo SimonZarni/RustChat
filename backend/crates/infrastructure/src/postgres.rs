@@ -8,18 +8,20 @@ use async_trait::async_trait;
 use rustchat_application::{
     error::AppError,
     ports::{
-        ActiveSession, AdminUser, AuditEvent, AuditPage, AuditUser, CommunityRepository,
-        ConversationRepository, CreateUserOutcome, EmailStatus, EncryptedSecret, MessageRepository,
-        MfaRepository, NewSession, NewUser, SessionRepository, TokenDigest, TotpRecord,
-        UserCredentials, UserRepository, VerifyEmailOutcome,
+        ActiveSession, AdminUser, AttachmentRepository, AuditEvent, AuditPage, AuditUser,
+        CommunityRepository, ConversationRepository, CreateUserOutcome, EmailStatus,
+        EncryptedSecret, MessageRepository, MfaRepository, NewSession, NewUser, SessionRepository,
+        TokenDigest, TotpRecord, UserCredentials, UserRepository, VerifyEmailOutcome,
     },
 };
 use rustchat_domain::{
+    attachment::Attachment,
     community::{Category, Channel, Community, Role},
     conversation::{Conversation, ConversationKind, ConversationName, ConversationPage},
     identity::{
-        CategoryId, ChannelId, CommunityId, ConversationId, MessageId, ProfilePrivacy,
-        ProfileVisibility, RoleId, Session, SessionId, User, UserId, UserProfile, Username,
+        AttachmentId, CategoryId, ChannelId, CommunityId, ConversationId, MessageId,
+        ProfilePrivacy, ProfileVisibility, RoleId, Session, SessionId, User, UserId, UserProfile,
+        Username,
     },
     message::{
         DeliveryCursor, Message, MessageContent, MessagePage, MessageReaction, ReactionEmoji,
@@ -2405,7 +2407,7 @@ fn message_from_row(row: &PgRow) -> Result<Message, AppError> {
             .into_iter()
             .map(UserId::from_uuid)
             .collect(),
-        content: MessageContent::parse(raw_content).map_err(AppError::internal)?,
+        content: MessageContent::parse_stored(raw_content).map_err(AppError::internal)?,
         created_at: row.try_get("created_at").map_err(db_error)?,
         edited_at: row.try_get("edited_at").map_err(db_error)?,
         deleted_at: row.try_get("deleted_at").map_err(db_error)?,
@@ -2519,14 +2521,53 @@ impl MessageRepository for PgMessageRepository {
         reply_to_message_id: Option<MessageId>,
         content: MessageContent,
     ) -> Result<Message, AppError> {
+        self.send_with_attachments(
+            caller,
+            conversation,
+            client_message_id,
+            reply_to_message_id,
+            content,
+            Vec::new(),
+        )
+        .await
+    }
+
+    async fn send_with_attachments(
+        &self,
+        caller: UserId,
+        conversation: ConversationId,
+        client_message_id: MessageId,
+        reply_to_message_id: Option<MessageId>,
+        content: MessageContent,
+        attachments: Vec<AttachmentId>,
+    ) -> Result<Message, AppError> {
+        if attachments.len() > 10 {
+            return Err(AppError::InvalidAttachmentRequest);
+        }
+        let mut unique = HashSet::new();
+        if attachments.iter().any(|id| !unique.insert(id.as_uuid())) {
+            return Err(AppError::InvalidAttachmentRequest);
+        }
         let fingerprint: [u8; 32] = if let Some(reply_id) = reply_to_message_id {
             let mut fingerprint_hash = Sha256::new();
             fingerprint_hash.update(content.as_str().as_bytes());
             fingerprint_hash.update([0]);
             fingerprint_hash.update(reply_id.as_uuid().as_bytes());
+            for attachment in &attachments {
+                fingerprint_hash.update(attachment.as_uuid().as_bytes());
+            }
             fingerprint_hash.finalize().into()
         } else {
-            Sha256::digest(content.as_str().as_bytes()).into()
+            if attachments.is_empty() {
+                Sha256::digest(content.as_str().as_bytes()).into()
+            } else {
+                let mut fingerprint_hash = Sha256::new();
+                fingerprint_hash.update(content.as_str().as_bytes());
+                for attachment in &attachments {
+                    fingerprint_hash.update(attachment.as_uuid().as_bytes());
+                }
+                fingerprint_hash.finalize().into()
+            }
         };
         let mut tx = self.pool.begin().await.map_err(db_error)?;
         let allowed = sqlx::query("SELECT c.id FROM conversations c JOIN conversation_members cm ON cm.conversation_id = c.id AND cm.user_id = $2 WHERE c.id = $1 AND NOT EXISTS (SELECT 1 FROM community_channels ch WHERE ch.conversation_id = c.id AND (ch.read_only OR NOT channel_has_permission($2, ch.id, 65))) FOR UPDATE OF c")
@@ -2562,6 +2603,14 @@ impl MessageRepository for PgMessageRepository {
             }
         }
 
+        if !attachments.is_empty() {
+            let available: i64 = sqlx::query_scalar("SELECT count(*) FROM message_attachments WHERE id = ANY($1) AND conversation_id = $2 AND owner_id = $3 AND state = 'ready' AND message_id IS NULL")
+                .bind(attachments.iter().map(AttachmentId::as_uuid).collect::<Vec<_>>()).bind(conversation.as_uuid()).bind(caller.as_uuid()).fetch_one(&mut *tx).await.map_err(db_error)?;
+            if available != attachments.len() as i64 {
+                return Err(AppError::NotFound);
+            }
+        }
+
         let mentioned_user_ids = resolve_mentions(&mut tx, conversation, content.as_str()).await?;
 
         let sequence: i64 = sqlx::query_scalar("UPDATE conversations SET last_sequence = last_sequence + 1 WHERE id = $1 RETURNING last_sequence")
@@ -2574,6 +2623,13 @@ impl MessageRepository for PgMessageRepository {
         sqlx::query("INSERT INTO messages (id, conversation_id, sequence, sender_id, client_message_id, reply_to_message_id, content, request_fingerprint, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)")
             .bind(id.as_uuid()).bind(conversation.as_uuid()).bind(sequence).bind(caller.as_uuid()).bind(client_message_id.as_uuid()).bind(reply_to_message_id.map(|reply| reply.as_uuid())).bind(content.as_str()).bind(fingerprint.as_slice()).bind(now)
             .execute(&mut *tx).await.map_err(db_error)?;
+        if !attachments.is_empty() {
+            let changed = sqlx::query("UPDATE message_attachments a SET message_id = $1, position = linked.ordinality::smallint FROM unnest($2::uuid[]) WITH ORDINALITY AS linked(id, ordinality) WHERE a.id = linked.id AND a.conversation_id = $3 AND a.owner_id = $4 AND a.state = 'ready' AND a.message_id IS NULL")
+                .bind(id.as_uuid()).bind(attachments.iter().map(AttachmentId::as_uuid).collect::<Vec<_>>()).bind(conversation.as_uuid()).bind(caller.as_uuid()).execute(&mut *tx).await.map_err(db_error)?;
+            if changed.rows_affected() != attachments.len() as u64 {
+                return Err(AppError::NotFound);
+            }
+        }
         insert_mentions(&mut tx, id, conversation, &mentioned_user_ids).await?;
         let payload = serde_json::json!({
             "type": "message.created",
@@ -2947,6 +3003,200 @@ impl MessageRepository for PgMessageRepository {
                 })
             })
             .collect()
+    }
+}
+
+#[derive(Clone)]
+pub struct PgAttachmentRepository {
+    pool: PgPool,
+}
+
+impl PgAttachmentRepository {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+fn attachment_from_row(row: &PgRow) -> Result<Attachment, AppError> {
+    Ok(Attachment {
+        id: AttachmentId::from_uuid(row.try_get("id").map_err(db_error)?),
+        conversation_id: ConversationId::from_uuid(
+            row.try_get("conversation_id").map_err(db_error)?,
+        ),
+        owner_id: UserId::from_uuid(row.try_get("owner_id").map_err(db_error)?),
+        message_id: row
+            .try_get::<Option<Uuid>, _>("message_id")
+            .map_err(db_error)?
+            .map(MessageId::from_uuid),
+        file_name: row.try_get("file_name").map_err(db_error)?,
+        media_type: row.try_get("media_type").map_err(db_error)?,
+        byte_size: row.try_get("byte_size").map_err(db_error)?,
+        created_at: row.try_get("created_at").map_err(db_error)?,
+    })
+}
+
+const ATTACHMENT_COLUMNS: &str =
+    "id, conversation_id, owner_id, message_id, file_name, media_type, byte_size, created_at";
+
+#[async_trait]
+impl AttachmentRepository for PgAttachmentRepository {
+    async fn reserve(
+        &self,
+        caller: UserId,
+        conversation: ConversationId,
+        id: AttachmentId,
+        storage_key: &str,
+        file_name: &str,
+        declared_type: &str,
+        byte_size: i64,
+        now: OffsetDateTime,
+        expires_at: OffsetDateTime,
+        quota_bytes: i64,
+    ) -> Result<(String, String), AppError> {
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        let allowed: Option<Uuid> = sqlx::query_scalar("SELECT c.id FROM conversations c JOIN conversation_members cm ON cm.conversation_id = c.id AND cm.user_id = $2 WHERE c.id = $1 AND NOT EXISTS (SELECT 1 FROM community_channels ch WHERE ch.conversation_id = c.id AND (ch.read_only OR NOT channel_has_permission($2, ch.id, 65))) FOR UPDATE OF c")
+            .bind(conversation.as_uuid()).bind(caller.as_uuid()).fetch_optional(&mut *tx).await.map_err(db_error)?;
+        if allowed.is_none() {
+            return Err(AppError::NotFound);
+        }
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(caller.as_uuid().to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(db_error)?;
+        let used: i64 = sqlx::query_scalar("SELECT COALESCE(sum(byte_size), 0)::bigint FROM message_attachments WHERE owner_id = $1 AND (state = 'ready' OR (state = 'pending' AND expires_at > $2))")
+            .bind(caller.as_uuid()).bind(now).fetch_one(&mut *tx).await.map_err(db_error)?;
+        if used.saturating_add(byte_size) > quota_bytes {
+            return Err(AppError::AttachmentLimitExceeded);
+        }
+        let upload_key = format!("staging/{}/{}", caller.as_uuid(), id.as_uuid());
+        sqlx::query("INSERT INTO message_attachments (id, conversation_id, owner_id, storage_key, upload_key, file_name, media_type, byte_size, state, created_at, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9, $10)")
+            .bind(id.as_uuid()).bind(conversation.as_uuid()).bind(caller.as_uuid()).bind(storage_key).bind(&upload_key).bind(file_name).bind(declared_type).bind(byte_size).bind(now).bind(expires_at)
+            .execute(&mut *tx).await.map_err(db_error)?;
+        tx.commit().await.map_err(db_error)?;
+        Ok((upload_key, storage_key.to_owned()))
+    }
+
+    async fn pending_upload(
+        &self,
+        caller: UserId,
+        attachment: AttachmentId,
+    ) -> Result<(String, String, i64), AppError> {
+        let row = sqlx::query("SELECT a.upload_key, a.storage_key, a.byte_size FROM message_attachments a JOIN conversation_members cm ON cm.conversation_id = a.conversation_id AND cm.user_id = $2 WHERE a.id = $1 AND a.owner_id = $2 AND a.state = 'pending' AND a.expires_at > now() AND NOT EXISTS (SELECT 1 FROM community_channels ch WHERE ch.conversation_id = a.conversation_id AND (ch.read_only OR NOT channel_has_permission($2, ch.id, 65)))")
+            .bind(attachment.as_uuid()).bind(caller.as_uuid()).fetch_optional(&self.pool).await.map_err(db_error)?.ok_or(AppError::NotFound)?;
+        Ok((
+            row.try_get("upload_key").map_err(db_error)?,
+            row.try_get("storage_key").map_err(db_error)?,
+            row.try_get("byte_size").map_err(db_error)?,
+        ))
+    }
+
+    async fn complete(
+        &self,
+        caller: UserId,
+        attachment: AttachmentId,
+        media_type: &str,
+        actual_size: i64,
+        now: OffsetDateTime,
+    ) -> Result<Attachment, AppError> {
+        let query = format!(
+            "UPDATE message_attachments a SET state = 'ready', media_type = $3 WHERE a.id = $1 AND a.owner_id = $2 AND a.state = 'pending' AND a.expires_at > $4 AND a.byte_size = $5 AND EXISTS (SELECT 1 FROM conversation_members cm WHERE cm.conversation_id = a.conversation_id AND cm.user_id = $2) AND NOT EXISTS (SELECT 1 FROM community_channels ch WHERE ch.conversation_id = a.conversation_id AND (ch.read_only OR NOT channel_has_permission($2, ch.id, 65))) RETURNING {ATTACHMENT_COLUMNS}"
+        );
+        let row = sqlx::query(&query)
+            .bind(attachment.as_uuid())
+            .bind(caller.as_uuid())
+            .bind(media_type)
+            .bind(now)
+            .bind(actual_size)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db_error)?
+            .ok_or(AppError::NotFound)?;
+        attachment_from_row(&row)
+    }
+
+    async fn for_download(
+        &self,
+        caller: UserId,
+        attachment: AttachmentId,
+    ) -> Result<(Attachment, String), AppError> {
+        let query = format!(
+            "SELECT a.id, a.conversation_id, a.owner_id, a.message_id, a.file_name, a.media_type, a.byte_size, a.created_at, a.storage_key FROM message_attachments a JOIN conversation_members cm ON cm.conversation_id = a.conversation_id AND cm.user_id = $2 JOIN messages m ON m.id = a.message_id AND m.conversation_id = a.conversation_id AND m.deleted_at IS NULL WHERE a.id = $1 AND a.state = 'ready' AND NOT EXISTS (SELECT 1 FROM community_channels ch WHERE ch.conversation_id = a.conversation_id AND NOT channel_has_permission($2, ch.id, 129))"
+        );
+        let row = sqlx::query(&query)
+            .bind(attachment.as_uuid())
+            .bind(caller.as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db_error)?
+            .ok_or(AppError::NotFound)?;
+        Ok((
+            attachment_from_row(&row)?,
+            row.try_get("storage_key").map_err(db_error)?,
+        ))
+    }
+
+    async fn attach_to_message(
+        &self,
+        caller: UserId,
+        conversation: ConversationId,
+        message: MessageId,
+        attachments: &[AttachmentId],
+    ) -> Result<(), AppError> {
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        let allowed: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM messages m JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = $3 WHERE m.id = $2 AND m.conversation_id = $1 AND m.sender_id = $3 AND m.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM community_channels ch WHERE ch.conversation_id = $1 AND (ch.read_only OR NOT channel_has_permission($3, ch.id, 65))))")
+            .bind(conversation.as_uuid()).bind(message.as_uuid()).bind(caller.as_uuid()).fetch_one(&mut *tx).await.map_err(db_error)?;
+        if !allowed {
+            return Err(AppError::NotFound);
+        }
+        let existing_count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM message_attachments WHERE message_id = $1")
+                .bind(message.as_uuid())
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(db_error)?;
+        if existing_count + attachments.len() as i64 > 10 {
+            return Err(AppError::InvalidAttachmentRequest);
+        }
+        let mut unique = HashSet::new();
+        for id in attachments {
+            if !unique.insert(id.as_uuid()) {
+                return Err(AppError::InvalidAttachmentRequest);
+            }
+        }
+        let updated = sqlx::query("UPDATE message_attachments a SET message_id = $1, position = linked.ordinality::smallint FROM unnest($2::uuid[]) WITH ORDINALITY AS linked(id, ordinality) WHERE a.id = linked.id AND a.conversation_id = $3 AND a.owner_id = $4 AND a.state = 'ready' AND a.message_id IS NULL")
+            .bind(message.as_uuid()).bind(attachments.iter().map(AttachmentId::as_uuid).collect::<Vec<_>>()).bind(conversation.as_uuid()).bind(caller.as_uuid()).execute(&mut *tx).await.map_err(db_error)?;
+        if updated.rows_affected() != attachments.len() as u64 {
+            return Err(AppError::NotFound);
+        }
+        tx.commit().await.map_err(db_error)
+    }
+
+    async fn list_for_messages(
+        &self,
+        caller: UserId,
+        conversation: ConversationId,
+        messages: &[MessageId],
+    ) -> Result<Vec<Attachment>, AppError> {
+        if messages.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = sqlx::query("SELECT a.id, a.conversation_id, a.owner_id, a.message_id, a.file_name, a.media_type, a.byte_size, a.created_at FROM message_attachments a JOIN conversation_members cm ON cm.conversation_id = a.conversation_id AND cm.user_id = $2 JOIN messages m ON m.id = a.message_id AND m.deleted_at IS NULL WHERE a.conversation_id = $1 AND a.message_id = ANY($3) AND a.state = 'ready' AND NOT EXISTS (SELECT 1 FROM community_channels ch WHERE ch.conversation_id = a.conversation_id AND NOT channel_has_permission($2, ch.id, 129)) ORDER BY a.message_id, a.position")
+            .bind(conversation.as_uuid()).bind(caller.as_uuid()).bind(messages.iter().map(MessageId::as_uuid).collect::<Vec<_>>()).fetch_all(&self.pool).await.map_err(db_error)?;
+        rows.iter().map(attachment_from_row).collect()
+    }
+
+    async fn delete_unattached(
+        &self,
+        caller: UserId,
+        attachment: AttachmentId,
+    ) -> Result<(String, String), AppError> {
+        let row = sqlx::query("DELETE FROM message_attachments WHERE id = $1 AND owner_id = $2 AND message_id IS NULL RETURNING upload_key, storage_key")
+            .bind(attachment.as_uuid()).bind(caller.as_uuid()).fetch_optional(&self.pool).await.map_err(db_error)?.ok_or(AppError::NotFound)?;
+        Ok((
+            row.try_get("upload_key").map_err(db_error)?,
+            row.try_get("storage_key").map_err(db_error)?,
+        ))
     }
 }
 

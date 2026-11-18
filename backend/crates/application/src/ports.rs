@@ -4,11 +4,13 @@
 
 use async_trait::async_trait;
 use rustchat_domain::{
+    attachment::Attachment,
     community::{Category, Channel, Community, Role},
     conversation::{Conversation, ConversationName, ConversationPage},
     identity::{
-        CategoryId, ChannelId, CommunityId, ConversationId, EmailAddress, MessageId, PlainPassword,
-        ProfilePrivacy, RoleId, Session, SessionId, User, UserId, UserProfile, Username,
+        AttachmentId, CategoryId, ChannelId, CommunityId, ConversationId, EmailAddress, MessageId,
+        PlainPassword, ProfilePrivacy, RoleId, Session, SessionId, User, UserId, UserProfile,
+        Username,
     },
     message::{
         DeliveryCursor, Message, MessageContent, MessagePage, MessageReaction, ReactionEmoji,
@@ -369,6 +371,27 @@ pub trait MessageRepository: Send + Sync {
         reply_to_message_id: Option<MessageId>,
         content: MessageContent,
     ) -> Result<Message, AppError>;
+    async fn send_with_attachments(
+        &self,
+        caller: UserId,
+        conversation: ConversationId,
+        client_message_id: MessageId,
+        reply_to_message_id: Option<MessageId>,
+        content: MessageContent,
+        attachments: Vec<AttachmentId>,
+    ) -> Result<Message, AppError> {
+        if !attachments.is_empty() {
+            return Err(AppError::InvalidAttachmentRequest);
+        }
+        self.send(
+            caller,
+            conversation,
+            client_message_id,
+            reply_to_message_id,
+            content,
+        )
+        .await
+    }
     async fn edit(
         &self,
         caller: UserId,
@@ -429,6 +452,78 @@ pub trait MessageRepository: Send + Sync {
         caller: UserId,
         conversation: ConversationId,
     ) -> Result<Vec<DeliveryCursor>, AppError>;
+}
+
+#[async_trait]
+pub trait AttachmentRepository: Send + Sync {
+    async fn reserve(
+        &self,
+        caller: UserId,
+        conversation: ConversationId,
+        id: AttachmentId,
+        storage_key: &str,
+        file_name: &str,
+        declared_type: &str,
+        byte_size: i64,
+        now: OffsetDateTime,
+        expires_at: OffsetDateTime,
+        quota_bytes: i64,
+    ) -> Result<(String, String), AppError>;
+    async fn complete(
+        &self,
+        caller: UserId,
+        attachment: AttachmentId,
+        media_type: &str,
+        actual_size: i64,
+        now: OffsetDateTime,
+    ) -> Result<Attachment, AppError>;
+    async fn pending_upload(
+        &self,
+        caller: UserId,
+        attachment: AttachmentId,
+    ) -> Result<(String, String, i64), AppError>;
+    async fn for_download(
+        &self,
+        caller: UserId,
+        attachment: AttachmentId,
+    ) -> Result<(Attachment, String), AppError>;
+    async fn attach_to_message(
+        &self,
+        caller: UserId,
+        conversation: ConversationId,
+        message: MessageId,
+        attachments: &[AttachmentId],
+    ) -> Result<(), AppError>;
+    async fn list_for_messages(
+        &self,
+        caller: UserId,
+        conversation: ConversationId,
+        messages: &[MessageId],
+    ) -> Result<Vec<Attachment>, AppError>;
+    async fn delete_unattached(
+        &self,
+        caller: UserId,
+        attachment: AttachmentId,
+    ) -> Result<(String, String), AppError>;
+}
+
+#[async_trait]
+pub trait AttachmentStorage: Send + Sync {
+    async fn presign_upload(
+        &self,
+        storage_key: &str,
+        content_type: &str,
+        expires_in: std::time::Duration,
+    ) -> Result<String, AppError>;
+    async fn inspect_upload(&self, storage_key: &str) -> Result<(i64, Vec<u8>), AppError>;
+    async fn promote_upload(&self, upload_key: &str, storage_key: &str) -> Result<(), AppError>;
+    async fn presign_download(
+        &self,
+        storage_key: &str,
+        file_name: &str,
+        expires_in: std::time::Duration,
+    ) -> Result<String, AppError>;
+    async fn delete(&self, storage_key: &str) -> Result<(), AppError>;
 }
 
 #[async_trait]

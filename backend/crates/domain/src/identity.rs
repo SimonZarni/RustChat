@@ -42,6 +42,7 @@ id_type!(CategoryId);
 id_type!(RoleId);
 id_type!(InviteId);
 id_type!(AuditEventId);
+id_type!(AttachmentId);
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EmailAddressError {

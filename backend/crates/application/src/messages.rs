@@ -47,6 +47,31 @@ impl MessageService {
             .await
     }
 
+    pub async fn send_with_attachments(
+        &self,
+        caller: UserId,
+        conversation: ConversationId,
+        client_message_id: MessageId,
+        reply_to_message_id: Option<MessageId>,
+        content: String,
+        attachments: Vec<rustchat_domain::identity::AttachmentId>,
+    ) -> Result<Message, AppError> {
+        if attachments.len() > 10 {
+            return Err(AppError::InvalidAttachmentRequest);
+        }
+        let content = MessageContent::parse_with_attachments(content, !attachments.is_empty())?;
+        self.messages
+            .send_with_attachments(
+                caller,
+                conversation,
+                client_message_id,
+                reply_to_message_id,
+                content,
+                attachments,
+            )
+            .await
+    }
+
     pub async fn list(
         &self,
         caller: UserId,

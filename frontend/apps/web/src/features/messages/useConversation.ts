@@ -40,6 +40,15 @@ export function useConversation(
     setMessages((current) => mergeBySequence(current, incoming))
   }, [])
 
+  const refreshAttachments = useCallback(async (messageId: string) => {
+    const conversationId = activeIdRef.current
+    if (!conversationId) return
+    try {
+      const result = await api<{ attachments: NonNullable<Message['attachments']> }>(`/api/v1/conversations/${conversationId}/messages/${messageId}/attachments`)
+      if (activeIdRef.current === conversationId) setMessages((current) => current.map((message) => message.id === messageId ? { ...message, attachments: result.attachments } : message))
+    } catch { /* Reconnect history fetches attachment metadata again. */ }
+  }, [])
+
   const replaceReactionsForMessages = useCallback((messageIds: string[], incoming: MessageReaction[]) => {
     setReactions((current) => {
       const next = { ...current }
@@ -186,13 +195,13 @@ export function useConversation(
   }, [activeId, olderCursor, loadingOlder, onError])
 
   /** Sends a message; throws (after reporting the error) so the composer can restore its draft. */
-  const send = useCallback(async (content: string) => {
+  const send = useCallback(async (content: string, attachmentIds: string[] = []) => {
     if (!activeId) return
     onError('')
     try {
       const result = await api<{ message: Message }>(`/api/v1/conversations/${activeId}/messages`, {
         method: 'POST',
-        body: JSON.stringify({ client_message_id: uuid7(), reply_to_message_id: replyTo?.id ?? null, content }),
+        body: JSON.stringify({ client_message_id: uuid7(), reply_to_message_id: replyTo?.id ?? null, content, attachment_ids: attachmentIds }),
       })
       setReplyTo(null)
       mergeMessages([result.message])
@@ -249,7 +258,7 @@ export function useConversation(
     reactions, pendingReactions, toggleReaction,
     readCursors, deliveryCursors,
     send, edit, remove,
-    mergeMessages, markRead, recordDelivered, resync,
+    mergeMessages, markRead, recordDelivered, resync, refreshAttachments,
     applyReactionEvent, applyReadCursor, applyDeliveryCursor,
     activeIdRef, reset,
   }

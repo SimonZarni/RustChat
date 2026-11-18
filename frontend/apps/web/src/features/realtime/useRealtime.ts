@@ -117,6 +117,7 @@ export function useRealtime({ user, activeId, socketRef, conversation, communiti
         edited_at: payload.edited_at,
         deleted_at: payload.deleted_at,
       }])
+      if (data.type === 'message.created') void convo.refreshAttachments(payload.message_id)
       if (data.sequence && data.sequence > 0) { convo.recordDelivered(data.sequence); void convo.markRead(data.sequence) }
     }
 

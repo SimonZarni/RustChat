@@ -1,5 +1,6 @@
 //! RustChat domain model. Free of framework and infrastructure dependencies.
 
+pub mod attachment;
 pub mod community;
 pub mod conversation;
 pub mod identity;

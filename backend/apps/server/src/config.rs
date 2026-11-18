@@ -18,6 +18,9 @@ const MAX_GROUP_MEMBER_LIMIT: usize = 500;
 const DEFAULT_SESSION_IDLE_DAYS: i64 = 7;
 const MAX_SESSION_IDLE_DAYS: i64 = 30;
 const MAX_RATE_LIMIT: u32 = 100_000;
+const DEFAULT_ATTACHMENT_MAX_MIB: u64 = 25;
+const MAX_ATTACHMENT_MAX_MIB: u64 = 100;
+const DEFAULT_ATTACHMENT_QUOTA_GIB: u64 = 2;
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ConfigError {
@@ -61,6 +64,16 @@ pub enum ConfigError {
     InvalidSmtpPort,
     #[error("RUSTCHAT_SMTP_USERNAME and RUSTCHAT_SMTP_PASSWORD must be configured together")]
     IncompleteSmtpCredentials,
+    #[error(
+        "S3-compatible storage configuration requires endpoint, bucket, access key, secret key, and region"
+    )]
+    IncompleteObjectStorageConfig,
+    #[error("RUSTCHAT_S3_ENDPOINT must be an http(s) URL without a path")]
+    InvalidObjectStorageEndpoint,
+    #[error("RUSTCHAT_ATTACHMENT_MAX_MIB must be between 1 and 100")]
+    InvalidAttachmentMax,
+    #[error("RUSTCHAT_ATTACHMENT_QUOTA_GIB must be between 1 and 100000")]
+    InvalidAttachmentQuota,
 }
 
 /// A database URL. It usually embeds a password, so `Debug` is redacted.
@@ -109,6 +122,30 @@ pub struct Config {
     pub email: Option<EmailConfig>,
     /// Present when an encryption key is configured, which enables TOTP enrolment.
     pub mfa: Option<MfaConfig>,
+    pub object_storage: Option<ObjectStorageConfig>,
+    pub attachment_max_file_bytes: i64,
+    pub attachment_quota_bytes: i64,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct ObjectStorageConfig {
+    pub endpoint: String,
+    pub region: String,
+    pub bucket: String,
+    pub access_key: String,
+    pub secret_key: String,
+}
+
+impl fmt::Debug for ObjectStorageConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ObjectStorageConfig")
+            .field("endpoint", &self.endpoint)
+            .field("region", &self.region)
+            .field("bucket", &self.bucket)
+            .field("access_key", &"<redacted>")
+            .field("secret_key", &"<redacted>")
+            .finish()
+    }
 }
 
 /// The 256-bit key that protects stored TOTP secrets. `Debug` is redacted.
@@ -374,6 +411,65 @@ impl Config {
             })
         };
 
+        let s3_endpoint = lookup("RUSTCHAT_S3_ENDPOINT").filter(|value| !value.trim().is_empty());
+        let s3_bucket = lookup("RUSTCHAT_S3_BUCKET").filter(|value| !value.trim().is_empty());
+        let s3_access_key = lookup("RUSTCHAT_S3_ACCESS_KEY_ID").filter(|value| !value.is_empty());
+        let s3_secret_key =
+            lookup("RUSTCHAT_S3_SECRET_ACCESS_KEY").filter(|value| !value.is_empty());
+        let s3_region = lookup("RUSTCHAT_S3_REGION").filter(|value| !value.trim().is_empty());
+        let configured = [
+            s3_endpoint.is_some(),
+            s3_bucket.is_some(),
+            s3_access_key.is_some(),
+            s3_secret_key.is_some(),
+            s3_region.is_some(),
+        ];
+        let object_storage = if configured.iter().all(|value| !value) {
+            None
+        } else if configured.iter().any(|value| !value) {
+            return Err(ConfigError::IncompleteObjectStorageConfig);
+        } else {
+            let endpoint = s3_endpoint.unwrap();
+            let valid_scheme = endpoint.starts_with("https://") || endpoint.starts_with("http://");
+            let authority = endpoint
+                .split_once("://")
+                .map(|(_, rest)| rest)
+                .unwrap_or_default();
+            if !valid_scheme
+                || authority.is_empty()
+                || authority.contains(['/', '?', '#', '@', ' '])
+                || (cookie_secure && endpoint.starts_with("http://"))
+            {
+                return Err(ConfigError::InvalidObjectStorageEndpoint);
+            }
+            Some(ObjectStorageConfig {
+                endpoint,
+                region: s3_region.unwrap(),
+                bucket: s3_bucket.unwrap(),
+                access_key: s3_access_key.unwrap(),
+                secret_key: s3_secret_key.unwrap(),
+            })
+        };
+
+        let attachment_max_mib = lookup("RUSTCHAT_ATTACHMENT_MAX_MIB")
+            .map(|raw| {
+                raw.parse::<u64>()
+                    .ok()
+                    .filter(|n| (1..=MAX_ATTACHMENT_MAX_MIB).contains(n))
+                    .ok_or(ConfigError::InvalidAttachmentMax)
+            })
+            .transpose()?
+            .unwrap_or(DEFAULT_ATTACHMENT_MAX_MIB);
+        let attachment_quota_gib = lookup("RUSTCHAT_ATTACHMENT_QUOTA_GIB")
+            .map(|raw| {
+                raw.parse::<u64>()
+                    .ok()
+                    .filter(|n| (1..=100_000).contains(n))
+                    .ok_or(ConfigError::InvalidAttachmentQuota)
+            })
+            .transpose()?
+            .unwrap_or(DEFAULT_ATTACHMENT_QUOTA_GIB);
+
         Ok(Self {
             bind_addr,
             database_url,
@@ -389,6 +485,11 @@ impl Config {
             api_rate_limits,
             email,
             mfa,
+            object_storage,
+            attachment_max_file_bytes: i64::try_from(attachment_max_mib * 1024 * 1024)
+                .map_err(|_| ConfigError::InvalidAttachmentMax)?,
+            attachment_quota_bytes: i64::try_from(attachment_quota_gib * 1024 * 1024 * 1024)
+                .map_err(|_| ConfigError::InvalidAttachmentQuota)?,
         })
     }
 
@@ -433,6 +534,24 @@ mod tests {
         assert_eq!(config.group_member_limit, 100);
         assert_eq!(config.rate_limits, RateLimitConfig::default());
         assert!(config.email.is_none());
+        assert!(config.object_storage.is_none());
+    }
+
+    #[test]
+    fn object_storage_is_optional_but_must_be_fully_configured() {
+        let configured = with(&[
+            ("RUSTCHAT_S3_ENDPOINT", "https://objects.example.test"),
+            ("RUSTCHAT_S3_REGION", "garage"),
+            ("RUSTCHAT_S3_BUCKET", "rustchat"),
+            ("RUSTCHAT_S3_ACCESS_KEY_ID", "key"),
+            ("RUSTCHAT_S3_SECRET_ACCESS_KEY", "secret"),
+        ])
+        .unwrap();
+        assert_eq!(configured.object_storage.unwrap().bucket, "rustchat");
+        assert_eq!(
+            with(&[("RUSTCHAT_S3_BUCKET", "rustchat")]).unwrap_err(),
+            ConfigError::IncompleteObjectStorageConfig
+        );
     }
 
     #[test]

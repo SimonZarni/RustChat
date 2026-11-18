@@ -15,6 +15,7 @@ export type Message = {
   created_at: string
   edited_at?: string | null
   deleted_at?: string | null
+  attachments?: MessageAttachment[]
 }
 export type MessageReaction = { message_id: string; emoji: string; count: number; reacted_by_me: boolean }
 export type Community = { id: string; owner_id: string; name: string; description: string; created_at: string; member_count: number }
@@ -47,6 +48,15 @@ export type InstanceUser = {
   deactivated_at: string | null
   suspended_at: string | null
   deleted_at: string | null
+}
+
+export type MessageAttachment = {
+  id: string
+  message_id: string | null
+  file_name: string
+  media_type: string
+  byte_size: number
+  created_at: string
 }
 export type ReadCursor = { user_id: string; sequence: number }
 export type EmailStatus = { email: string | null; verified: boolean }

@@ -30,6 +30,23 @@ impl MessageContent {
         Ok(Self(value))
     }
 
+    pub fn parse_with_attachments(
+        value: String,
+        has_attachments: bool,
+    ) -> Result<Self, MessageContentError> {
+        if has_attachments && value.trim().is_empty() && value.len() <= MESSAGE_MAX_BYTES {
+            return Ok(Self(String::new()));
+        }
+        Self::parse(value)
+    }
+
+    pub fn parse_stored(value: String) -> Result<Self, MessageContentError> {
+        if value.is_empty() {
+            return Ok(Self(value));
+        }
+        Self::parse(value)
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }

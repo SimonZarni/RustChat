@@ -238,6 +238,26 @@ impl IntoResponse for ApiError {
                     "INVALID_REACTION_REQUEST",
                     "Provide at most 100 valid message IDs.",
                 ),
+                AppError::InvalidAttachmentRequest => body(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "INVALID_ATTACHMENT_REQUEST",
+                    "The attachment request is invalid.",
+                ),
+                AppError::AttachmentLimitExceeded => body(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "ATTACHMENT_LIMIT_EXCEEDED",
+                    "The attachment exceeds the file-size or account-storage limit.",
+                ),
+                AppError::InvalidAttachmentContent(error) => body(
+                    StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                    "UNSUPPORTED_ATTACHMENT_TYPE",
+                    error.to_string(),
+                ),
+                AppError::AttachmentStorageUnavailable => body(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "ATTACHMENT_STORAGE_UNAVAILABLE",
+                    "Attachment storage is not configured.",
+                ),
                 AppError::Internal(detail) => {
                     // Log the cause server-side; never return it to the client.
                     tracing::error!(error = %detail, "internal error");

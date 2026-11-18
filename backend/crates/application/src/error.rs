@@ -1,4 +1,5 @@
 use rustchat_domain::{
+    attachment::AttachmentError,
     conversation::ConversationNameError,
     identity::{EmailAddressError, PasswordError, UsernameError},
     message::{MessageContentError, ReactionEmojiError},
@@ -74,6 +75,14 @@ pub enum AppError {
     InvalidDeliveryCursor,
     #[error("reaction request is invalid")]
     InvalidReactionRequest,
+    #[error("attachment request is invalid")]
+    InvalidAttachmentRequest,
+    #[error("attachment quota or size limit was exceeded")]
+    AttachmentLimitExceeded,
+    #[error("uploaded attachment content is not allowed")]
+    InvalidAttachmentContent(#[from] AttachmentError),
+    #[error("attachment storage is not configured")]
+    AttachmentStorageUnavailable,
     #[error("internal error: {0}")]
     Internal(String),
 }

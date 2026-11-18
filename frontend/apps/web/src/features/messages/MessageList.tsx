@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { initial, shortId } from '../../lib/ids'
 import { timeLabel } from '../../lib/format'
+import { api } from '../../lib/api'
 import type { Message, MessageReaction, User } from '../../types'
 import { renderMessageContent } from './markdown'
 import { MessageActions } from './MessageActions'
@@ -46,6 +47,18 @@ export function MessageList({
   const [activeId, setActiveId] = useState<string | null>(null)
   const lastOwnId = [...messages].reverse().find((item) => item.sender_id === user.id && !item.deleted_at)?.id
 
+  async function downloadAttachment(attachmentId: string) {
+    try {
+      const result = await api<{ download_url: string }>(`/api/v1/attachments/${attachmentId}/download`)
+      const link = document.createElement('a')
+      link.href = result.download_url
+      link.rel = 'noopener'
+      document.body.append(link)
+      link.click()
+      link.remove()
+    } catch { /* The API error is also surfaced by the next conversation refresh. */ }
+  }
+
   // Keep the viewport anchored when older messages are prepended; otherwise follow new messages.
   useLayoutEffect(() => {
     const container = scrollRef.current
@@ -89,6 +102,13 @@ export function MessageList({
                   )}
                   {message.reply_to_message_id && <blockquote className="reply-quote">{quoted?.content ?? 'Original message'}</blockquote>}
                   <div className="message-body">{renderMessageContent(message, profiles)}</div>
+                  {!message.deleted_at && Boolean(message.attachments?.length) && <ul className="message-attachments" aria-label="Message attachments">
+                    {message.attachments?.map((attachment) => <li key={attachment.id}>
+                      <span className="attachment-file-mark" aria-hidden="true">↗</span>
+                      <span><strong>{attachment.file_name}</strong><small>{attachment.media_type} · {(attachment.byte_size / 1024 / 1024).toFixed(1)} MB</small></span>
+                      <button type="button" onClick={() => void downloadAttachment(attachment.id)} aria-label={`Download ${attachment.file_name}`}>Download</button>
+                    </li>)}
+                  </ul>}
                   {!message.deleted_at && <ReactionChips message={message} reactions={reactions[message.id]} pending={pendingReactions} onToggle={onToggleReaction} />}
                   {(message.edited_at || message.id === lastOwnId) && (
                     <div className="message-status">

@@ -3,6 +3,7 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use rustchat_application::{
+    attachments::{AttachmentConfig, AttachmentService},
     auth::{AuthConfig, AuthService, SessionLifecycle},
     communities::{CommunityService, CommunityServiceConfig},
     conversations::{ConversationConfig, ConversationService},
@@ -12,11 +13,13 @@ use rustchat_application::{
 };
 use rustchat_http::{AppEvents, AppState, HttpConfig, cluster, router};
 use rustchat_infrastructure::{
+    attachments::S3AttachmentStorage,
     cluster::{PgEventBus, PgPresenceStore},
     mfa::AesGcmTotpEngine,
     postgres::{
-        self, PgCommunityRepository, PgConversationRepository, PgMessageRepository,
-        PgMfaRepository, PgOutboxRepository, PgSessionRepository, PgUserRepository,
+        self, PgAttachmentRepository, PgCommunityRepository, PgConversationRepository,
+        PgMessageRepository, PgMfaRepository, PgOutboxRepository, PgSessionRepository,
+        PgUserRepository,
     },
     ratelimit::{InMemoryRateLimiter, PgRateLimiter},
     security::{Argon2Hasher, OsTokenService, SystemClock},
@@ -159,6 +162,23 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
             async move { postgres::ready(&pool).await }
         }
     });
+    let state = match config.object_storage.as_ref() {
+        Some(storage) => state.with_attachments(Arc::new(AttachmentService::new(
+            Arc::new(PgAttachmentRepository::new(pool.clone())),
+            Arc::new(S3AttachmentStorage::new(
+                &storage.endpoint,
+                &storage.region,
+                &storage.access_key,
+                &storage.secret_key,
+                &storage.bucket,
+            )),
+            AttachmentConfig {
+                max_file_bytes: config.attachment_max_file_bytes,
+                quota_bytes: config.attachment_quota_bytes,
+            },
+        ))),
+        None => state,
+    };
 
     let listener = TcpListener::bind(config.bind_addr).await?;
     tracing::info!(addr = %listener.local_addr()?, "rustchat server listening");

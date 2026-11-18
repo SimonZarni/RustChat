@@ -87,6 +87,8 @@ pub struct Options {
     /// Accounts treated as instance administrators.
     pub admin_user_ids: std::collections::HashSet<rustchat_domain::identity::UserId>,
     pub email: Option<CapturedEmail>,
+    /// Enable attachment routes against an explicitly configured test store.
+    pub attachments: Option<Arc<rustchat_application::attachments::AttachmentService>>,
     /// Enforce general API budgets with these limits when set.
     pub api_limits: Option<ApiRateLimitConfig>,
     pub lifecycle: SessionLifecycle,
@@ -105,6 +107,7 @@ impl Default for Options {
             mfa: false,
             admin_user_ids: Default::default(),
             email: None,
+            attachments: None,
             api_limits: None,
             lifecycle: SessionLifecycle::default(),
             rate_limits: RateLimitConfig {
@@ -206,6 +209,9 @@ pub fn node(pool: PgPool, options: Options) -> Node {
             Arc::new(SystemClock),
             limits,
         )));
+    }
+    if let Some(attachments) = options.attachments {
+        state = state.with_attachments(attachments);
     }
     if let Some(instance) = options.cluster {
         let outbox = Arc::new(PgOutboxRepository::new(pool.clone()));

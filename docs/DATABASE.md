@@ -42,11 +42,11 @@ Important qualifications:
 | Encryption (later) | `device_keys`, `key_packages`, `encrypted_key_envelopes` |
 | Administration | `server_settings`, `audit_logs` |
 
-This is the original planning inventory, not the implemented schema; see **Implemented schema** below for the actual tables (for example `communities` and `community_channels` rather than `servers` and `channels`; `devices`, attachments and encryption tables do not exist). Do not create every table before its feature is implemented and its requirements are understood.
+This is the original planning inventory, not the implemented schema; see **Implemented schema** below for the actual tables (for example `communities` and `community_channels` rather than `servers` and `channels`; devices and encryption tables do not exist). Do not create every table before its feature is implemented and its requirements are understood.
 
 ### Implemented schema
 
-The implemented tables are described below (`backend/migrations/0001_identity.sql` through `0020_instance_administration.sql`). Authentication rate-limit keys are SHA-256 digests with expiry and are shared by server instances using this database. Instance administration adds nullable account suspension timestamps and `instance_admin_audit_log`, retaining suspension and restoration actions with actor and target references. Basic profiles include an editable display name and bio. Avatars and attachments remain planned.
+The implemented tables are described below (`backend/migrations/0001_identity.sql` through `0026_message_attachments.sql`). Authentication rate-limit keys are SHA-256 digests with expiry and are shared by server instances using this database. Instance administration adds nullable account suspension timestamps and `instance_admin_audit_log`, retaining suspension and restoration actions with actor and target references. Basic profiles include an editable display name and bio. Attachments store metadata and opaque object keys in PostgreSQL; file bytes live in the configured S3-compatible store.
 
 **`users`**
 
@@ -113,9 +113,11 @@ Messages may reference a parent message for replies. The composite foreign key b
 
 **Instance administration** uses `instance_admin_audit_log` to record actual suspend and restore transitions with actor, target, event, time and details. Suspension updates `users.suspended_at`, revokes active sessions and inserts the audit event in one transaction. Administrators page through them with `GET /api/v1/admin/audit`, and managers read a community's rows with `GET /api/v1/communities/{id}/audit`; both use keyset paging on `(created_at, id)`.
 
+**`message_attachments`** (migration `0026_message_attachments.sql`) stores owner, conversation, optional message, display metadata, size, lifecycle state and unique opaque staging/final object keys. A pending row reserves quota; only ready rows count toward stored-file quota. Message association uses a position from 0 through 9 and is committed in the same transaction as message creation. Deleting the message clears its `message_id` while retaining the uploaded object as an unassociated item for cleanup. File bytes are stored in the configured S3-compatible service, not PostgreSQL. Expired staging-object and orphan cleanup is currently an operator lifecycle-policy responsibility.
+
 ## 5. Relationships (conceptual)
 
-This diagram is the original conceptual model and uses planned names (`SERVERS`, `CHANNELS`, `DEVICES`, `MESSAGE_ATTACHMENTS`). In the implementation, servers are `communities`, channels are `community_channels` whose messages live in a backing conversation, and devices and attachments are not yet implemented.
+This diagram is the original conceptual model and uses planned names (`SERVERS`, `CHANNELS`, `DEVICES`, `MESSAGE_ATTACHMENTS`). In the implementation, servers are `communities`, channels are `community_channels` whose messages live in a backing conversation, and attachments are stored in `message_attachments`; devices remain unimplemented.
 
 ```mermaid
 erDiagram
