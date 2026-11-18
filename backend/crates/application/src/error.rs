@@ -73,6 +73,8 @@ pub enum AppError {
     InvalidProfile,
     #[error("read cursor cannot exceed the latest conversation sequence")]
     InvalidReadCursor,
+    #[error("notification preference request is invalid")]
+    InvalidNotificationPreferences,
     #[error("delivery cursor cannot exceed the latest conversation sequence")]
     InvalidDeliveryCursor,
     #[error("reaction request is invalid")]

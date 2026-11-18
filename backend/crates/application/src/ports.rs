@@ -356,12 +356,36 @@ pub struct NotificationRecord {
     pub read_at: Option<OffsetDateTime>,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ConversationNotificationPreferences {
+    pub conversation_id: uuid::Uuid,
+    pub messages_enabled: bool,
+    pub mentions_enabled: bool,
+    pub muted: bool,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub muted_until: Option<OffsetDateTime>,
+}
+
 #[async_trait]
 pub trait NotificationRepository: Send + Sync {
     async fn list(&self, user: UserId, limit: usize) -> Result<Vec<NotificationRecord>, AppError>;
     async fn unread_count(&self, user: UserId) -> Result<i64, AppError>;
     async fn mark_read(&self, user: UserId, notification: uuid::Uuid) -> Result<(), AppError>;
     async fn mark_all_read(&self, user: UserId) -> Result<(), AppError>;
+    async fn preferences(
+        &self,
+        user: UserId,
+        conversation: ConversationId,
+    ) -> Result<ConversationNotificationPreferences, AppError>;
+    async fn set_preferences(
+        &self,
+        user: UserId,
+        conversation: ConversationId,
+        messages_enabled: bool,
+        mentions_enabled: bool,
+        muted: bool,
+        muted_until: Option<OffsetDateTime>,
+    ) -> Result<ConversationNotificationPreferences, AppError>;
 }
 
 #[async_trait]

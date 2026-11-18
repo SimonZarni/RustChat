@@ -123,6 +123,11 @@ impl IntoResponse for ApiError {
                 AppError::NotFound => {
                     body(StatusCode::NOT_FOUND, "NOT_FOUND", "Resource not found.")
                 }
+                AppError::InvalidNotificationPreferences => body(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_NOTIFICATION_PREFERENCES",
+                    "Notification preferences are invalid.",
+                ),
                 AppError::CommunityOwnerCannotLeave => body(
                     StatusCode::CONFLICT,
                     "COMMUNITY_OWNER_CANNOT_LEAVE",

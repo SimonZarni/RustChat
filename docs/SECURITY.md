@@ -107,6 +107,7 @@ Do not advertise RustChat as E2EE until the complete key lifecycle and relevant 
 - Define retention and access controls for audit logs.
 - Minimize personal data in telemetry and error reporting.
 - Notification records and realtime hints omit message text; inbox reads are scoped to the recipient and notifications from blocked users are hidden.
+- Per-conversation notification settings are readable and writable only through the caller's current conversation/channel visibility; message and mention preferences are enforced in the message transaction and do not suppress message delivery.
 
 ## 12. Threats to test
 

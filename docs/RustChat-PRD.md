@@ -546,7 +546,7 @@ Requirements:
 
 Mobile push notifications are deferred until mobile clients are planned.
 
-**Implementation status:** The initial in-app inbox supports persistent notifications for direct messages, @mentions, and friend requests, unread counts, per-item and bulk read state, and realtime refresh hints. Browser/desktop notifications, notification preferences, mute controls, DND schedules, and community-event notifications remain planned.
+**Implementation status:** The in-app inbox supports persistent notifications for direct messages, @mentions, and friend requests, unread counts, per-item and bulk read state, realtime refresh hints, and per-conversation/channel message and mention toggles with permanent or timed mutes. Browser/desktop notifications, DND schedules, and community-event notifications remain planned.
 
 ### 4.14 Moderation and safety
 

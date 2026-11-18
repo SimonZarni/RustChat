@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DialogProvider } from './components/Dialogs'
 import { AccountFooter } from './features/account/AccountFooter'
 import { AuthScreen } from './features/auth/AuthScreen'
@@ -10,6 +10,7 @@ import { NewConversationDialog } from './features/conversations/NewConversationD
 import { PeopleDialog } from './features/social/PeopleDialog'
 import { NotificationDialog } from './features/notifications/NotificationDialog'
 import { useNotifications } from './features/notifications/useNotifications'
+import { NotificationPreferencesDialog } from './features/notifications/NotificationPreferencesDialog'
 import { ChatPanel } from './features/messages/ChatPanel'
 import { useConversation } from './features/messages/useConversation'
 import { useRealtime } from './features/realtime/useRealtime'
@@ -36,6 +37,7 @@ function Shell() {
   const [showNewConversation, setShowNewConversation] = useState(false)
   const [showPeople, setShowPeople] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
+  const [showNotificationPreferences, setShowNotificationPreferences] = useState(false)
   const [mobileList, setMobileList] = useState(true)
   const socketRef = useRef<WebSocket | null>(null)
 
@@ -110,6 +112,10 @@ function Shell() {
     ? activeConversation.members.filter((memberId) => memberId !== user.id).map((memberId) => conversation.profiles[memberId]?.username).find(Boolean)
     : undefined
   const title = activeChannel?.name ?? (activeConversation ? directPeerName ?? displayName(activeConversation, user.id) : 'Your messages')
+  const notificationTargets = useMemo(() => [
+    ...conversations.map((item) => ({ id: item.id, label: item.kind === 'direct' ? item.members.filter((memberId) => memberId !== user.id).map((memberId) => conversation.profiles[memberId]?.username).find(Boolean) ?? 'Direct message' : item.name ?? 'Group conversation' })),
+  ], [conversations, user.id, conversation.profiles])
+  const notificationCommunityIds = useMemo(() => communities.communities.map((item) => item.id), [communities.communities])
   const active = activeId && (activeConversation || activeChannel) ? {
     id: activeId,
     title,
@@ -137,6 +143,7 @@ function Shell() {
         </header>
         <div className="sidebar-search"><span aria-hidden="true">⌕</span><span>Conversations</span><kbd>{conversationShortcut}</kbd></div>
         <button className="notification-entry" aria-label={notifications.unreadCount ? `Notifications, ${notifications.unreadCount} unread` : 'Notifications'} onClick={() => setShowNotifications(true)}><span aria-hidden="true">♧</span><span>Notifications</span>{notifications.unreadCount > 0 && <span className="notification-count">{notifications.unreadCount > 99 ? '99+' : notifications.unreadCount}</span>}</button>
+        <button className="notification-entry" onClick={() => setShowNotificationPreferences(true)}><span aria-hidden="true">⚙</span><span>Notification settings</span></button>
         <button className="people-entry" onClick={() => setShowPeople(true)}><span aria-hidden="true">◎</span> Friends &amp; blocked</button>
         <CommunitySection
           state={communities} user={user} activeId={activeId} onOpenConversation={openConversation}
@@ -172,6 +179,11 @@ function Shell() {
         onRead={async (id) => { try { await notifications.markRead(id) } catch (cause) { setError(errorMessage(cause, 'Could not update notification')) } }}
         onReadAll={async () => { try { await notifications.markAllRead() } catch (cause) { setError(errorMessage(cause, 'Could not update notifications')) } }}
         onOpenConversation={openConversation} onOpenFriends={() => setShowPeople(true)}
+      />}
+      {showNotificationPreferences && <NotificationPreferencesDialog
+        targets={notificationTargets}
+        communityIds={notificationCommunityIds}
+        onClose={() => setShowNotificationPreferences(false)} onError={setError}
       />}
     </main>
   )

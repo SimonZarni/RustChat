@@ -362,6 +362,11 @@ pub fn router(state: AppState) -> Router {
         .route("/blocks/{user_id}", delete(social::unblock))
         .route("/conversations/{conversation_id}", get(conversations::get))
         .route(
+            "/conversations/{conversation_id}/notification-preferences",
+            get(conversations::notification_preferences)
+                .put(conversations::set_notification_preferences),
+        )
+        .route(
             "/conversations/{conversation_id}/members",
             get(conversations::members).post(conversations::add_member),
         )

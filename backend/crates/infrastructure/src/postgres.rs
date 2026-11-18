@@ -9,10 +9,11 @@ use rustchat_application::{
     error::AppError,
     ports::{
         ActiveSession, AdminUser, AttachmentRepository, AuditEvent, AuditPage, AuditUser,
-        CommunityRepository, ConversationRepository, CreateUserOutcome, EmailStatus,
-        EncryptedSecret, FriendRequest, MessageRepository, MfaRepository, NewSession, NewUser,
-        NotificationRecord, NotificationRepository, SessionRepository, SocialRepository,
-        SocialUser, TokenDigest, TotpRecord, UserCredentials, UserRepository, VerifyEmailOutcome,
+        CommunityRepository, ConversationNotificationPreferences, ConversationRepository,
+        CreateUserOutcome, EmailStatus, EncryptedSecret, FriendRequest, MessageRepository,
+        MfaRepository, NewSession, NewUser, NotificationRecord, NotificationRepository,
+        SessionRepository, SocialRepository, SocialUser, TokenDigest, TotpRecord, UserCredentials,
+        UserRepository, VerifyEmailOutcome,
     },
 };
 use rustchat_domain::{
@@ -444,6 +445,44 @@ impl NotificationRepository for PgNotificationRepository {
         .await
         .map_err(db_error)?;
         Ok(())
+    }
+    async fn preferences(
+        &self,
+        user: UserId,
+        conversation: ConversationId,
+    ) -> Result<ConversationNotificationPreferences, AppError> {
+        let row = sqlx::query("SELECT messages_enabled,mentions_enabled,muted,muted_until FROM conversation_notification_preferences WHERE user_id=$1 AND conversation_id=$2")
+            .bind(user.as_uuid()).bind(conversation.as_uuid()).fetch_optional(&self.pool).await.map_err(db_error)?;
+        let (messages_enabled, mentions_enabled, muted, muted_until) = if let Some(row) = row {
+            (
+                row.try_get("messages_enabled").map_err(db_error)?,
+                row.try_get("mentions_enabled").map_err(db_error)?,
+                row.try_get("muted").map_err(db_error)?,
+                row.try_get("muted_until").map_err(db_error)?,
+            )
+        } else {
+            (true, true, false, None)
+        };
+        Ok(ConversationNotificationPreferences {
+            conversation_id: conversation.as_uuid(),
+            messages_enabled,
+            mentions_enabled,
+            muted,
+            muted_until,
+        })
+    }
+    async fn set_preferences(
+        &self,
+        user: UserId,
+        conversation: ConversationId,
+        messages_enabled: bool,
+        mentions_enabled: bool,
+        muted: bool,
+        muted_until: Option<time::OffsetDateTime>,
+    ) -> Result<ConversationNotificationPreferences, AppError> {
+        sqlx::query("INSERT INTO conversation_notification_preferences(user_id,conversation_id,messages_enabled,mentions_enabled,muted,muted_until,updated_at) VALUES($1,$2,$3,$4,$5,$6,now()) ON CONFLICT(user_id,conversation_id) DO UPDATE SET messages_enabled=EXCLUDED.messages_enabled,mentions_enabled=EXCLUDED.mentions_enabled,muted=EXCLUDED.muted,muted_until=EXCLUDED.muted_until,updated_at=now()")
+            .bind(user.as_uuid()).bind(conversation.as_uuid()).bind(messages_enabled).bind(mentions_enabled).bind(muted).bind(muted_until).execute(&self.pool).await.map_err(db_error)?;
+        self.preferences(user, conversation).await
     }
 }
 
@@ -2907,7 +2946,7 @@ impl MessageRepository for PgMessageRepository {
         let direct_peer: Option<Uuid> = sqlx::query_scalar("SELECT cm.user_id FROM conversations c JOIN conversation_members cm ON cm.conversation_id=c.id WHERE c.id=$1 AND c.kind='direct' AND cm.user_id<>$2")
             .bind(conversation.as_uuid()).bind(caller.as_uuid()).fetch_optional(&mut *tx).await.map_err(db_error)?;
         if let Some(recipient) = direct_peer {
-            sqlx::query("INSERT INTO notifications(id,recipient_id,actor_id,kind,source_id,conversation_id,message_id,created_at) VALUES($1,$2,$3,'direct_message',$4,$5,$4,$6) ON CONFLICT DO NOTHING")
+            sqlx::query("INSERT INTO notifications(id,recipient_id,actor_id,kind,source_id,conversation_id,message_id,created_at) SELECT $1,$2,$3,'direct_message',$4,$5,$4,$6 WHERE NOT EXISTS(SELECT 1 FROM conversation_notification_preferences p WHERE p.user_id=$2 AND p.conversation_id=$5 AND (p.muted OR (p.muted_until IS NOT NULL AND p.muted_until>now()) OR NOT p.messages_enabled)) ON CONFLICT DO NOTHING")
                 .bind(Uuid::now_v7()).bind(recipient).bind(caller.as_uuid()).bind(id.as_uuid()).bind(conversation.as_uuid()).bind(now)
                 .execute(&mut *tx).await.map_err(db_error)?;
         }
@@ -2915,7 +2954,7 @@ impl MessageRepository for PgMessageRepository {
             if *recipient == caller {
                 continue;
             }
-            sqlx::query("INSERT INTO notifications(id,recipient_id,actor_id,kind,source_id,conversation_id,message_id,created_at) SELECT $1,$2,$3,'mention',$4,$5,$4,$6 WHERE NOT EXISTS(SELECT 1 FROM user_blocks WHERE (blocker_id=$2 AND blocked_id=$3) OR (blocker_id=$3 AND blocked_id=$2)) ON CONFLICT DO NOTHING")
+            sqlx::query("INSERT INTO notifications(id,recipient_id,actor_id,kind,source_id,conversation_id,message_id,created_at) SELECT $1,$2,$3,'mention',$4,$5,$4,$6 WHERE NOT EXISTS(SELECT 1 FROM user_blocks WHERE (blocker_id=$2 AND blocked_id=$3) OR (blocker_id=$3 AND blocked_id=$2)) AND NOT EXISTS(SELECT 1 FROM conversation_notification_preferences p WHERE p.user_id=$2 AND p.conversation_id=$5 AND (p.muted OR (p.muted_until IS NOT NULL AND p.muted_until>now()) OR NOT p.mentions_enabled)) ON CONFLICT DO NOTHING")
                 .bind(Uuid::now_v7()).bind(recipient.as_uuid()).bind(caller.as_uuid()).bind(id.as_uuid()).bind(conversation.as_uuid()).bind(now)
                 .execute(&mut *tx).await.map_err(db_error)?;
         }

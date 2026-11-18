@@ -129,3 +129,43 @@ async fn notification_read_state_is_private_to_the_recipient(pool: PgPool) {
     assert_eq!(forbidden.status, StatusCode::NOT_FOUND);
     assert_eq!(request.status, StatusCode::OK);
 }
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn conversation_preferences_mute_and_filter_notifications(pool: PgPool) {
+    let api = app(pool, Options::default());
+    let alice = sign_in(&api, "prefalice").await;
+    register(&api, "prefbob").await;
+    let bob = sign_in_existing(&api, "prefbob").await;
+    let created = call(
+        &api,
+        Method::POST,
+        "/api/v1/conversations",
+        Some(json!({"type":"direct","username":"prefbob"})),
+        Some(&alice),
+    )
+    .await;
+    let conversation_id = created.json["conversation"]["id"].as_str().unwrap();
+    let settings_url = format!("/api/v1/conversations/{conversation_id}/notification-preferences");
+    let default = call(&api, Method::GET, &settings_url, None, Some(&bob)).await;
+    assert_eq!(default.status, StatusCode::OK);
+    assert_eq!(default.json["messages_enabled"], true);
+    let saved = call(&api, Method::PUT, &settings_url, Some(json!({"messages_enabled":true,"mentions_enabled":true,"muted":true,"muted_until":null})), Some(&bob)).await;
+    assert_eq!(saved.status, StatusCode::OK);
+    let message = call(
+        &api,
+        Method::POST,
+        &format!("/api/v1/conversations/{conversation_id}/messages"),
+        Some(json!({"client_message_id":Uuid::now_v7(),"content":"Muted hello"})),
+        Some(&alice),
+    )
+    .await;
+    assert_eq!(message.status, StatusCode::CREATED);
+    let inbox = call(&api, Method::GET, "/api/v1/notifications", None, Some(&bob)).await;
+    assert_eq!(inbox.json["unread_count"], 0);
+    let invalid = call(&api, Method::PUT, &settings_url, Some(json!({"messages_enabled":true,"mentions_enabled":true,"muted":true,"muted_until":"2026-11-17T10:00:00Z"})), Some(&bob)).await;
+    assert_eq!(invalid.status, StatusCode::BAD_REQUEST);
+    register(&api, "prefstranger").await;
+    let stranger = sign_in_existing(&api, "prefstranger").await;
+    let hidden = call(&api, Method::GET, &settings_url, None, Some(&stranger)).await;
+    assert_eq!(hidden.status, StatusCode::NOT_FOUND);
+}

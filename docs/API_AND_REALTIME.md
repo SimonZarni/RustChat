@@ -154,8 +154,10 @@ All routes require the session cookie; writes also require an allowed `Origin`. 
 | `GET /api/v1/notifications?limit=50` | `200 {"notifications":[...],"unread_count":2}` | Most recent 1–100 notifications; actor username may be null |
 | `PUT /api/v1/notifications/{id}/read` | `204` | Recipient only; other users' notification IDs return `404` |
 | `PUT /api/v1/notifications/read-all` | `204` | Marks the caller's unread items as read |
+| `GET /api/v1/conversations/{id}/notification-preferences` | `200` | Caller must be able to access the conversation/channel; absent settings return enabled defaults |
+| `PUT /api/v1/conversations/{id}/notification-preferences` | `200` | Saves message/mention toggles and permanent or timed mute |
 
-Each item contains `id`, `kind` (`direct_message`, `mention`, or `friend_request`), optional `actor_id`/`actor_username`, optional `conversation_id`/`message_id`, `created_at`, and nullable `read_at`. Friend request accept/reject/cancel also marks its notification read. Advancing a conversation read cursor marks direct-message and mention notifications through that sequence as read. Browser/desktop delivery, per-conversation preferences, mutes, DND schedules, and selected community events remain planned.
+Each item contains `id`, `kind` (`direct_message`, `mention`, or `friend_request`), optional `actor_id`/`actor_username`, optional `conversation_id`/`message_id`, `created_at`, and nullable `read_at`. Friend request accept/reject/cancel also marks its notification read. Advancing a conversation read cursor marks direct-message and mention notifications through that sequence as read. Conversation/channel preferences default to enabled messages and mentions; a mute suppresses both notification kinds while preserving message delivery. Timed mute accepts an RFC3339 `muted_until` in the future; permanent mute uses `muted: true` and `muted_until: null`. Browser/desktop delivery, DND schedules, and selected community events remain planned.
 
 The member profile response is the supported way for a conversation participant to resolve member IDs to usernames. It does not provide a global user directory.
 

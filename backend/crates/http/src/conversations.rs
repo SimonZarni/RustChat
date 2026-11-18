@@ -153,6 +153,54 @@ pub async fn get(
     }))
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetNotificationPreferences {
+    messages_enabled: bool,
+    mentions_enabled: bool,
+    muted: bool,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    muted_until: Option<time::OffsetDateTime>,
+}
+
+pub async fn notification_preferences(
+    State(state): State<AppState>,
+    AuthUser(auth): AuthUser,
+    Path(raw): Path<String>,
+) -> Result<Json<rustchat_application::ports::ConversationNotificationPreferences>, ApiError> {
+    let id = parse_id(&raw)?;
+    state.conversations.get(auth.user.id, id).await?;
+    let service = state.notifications.as_deref().ok_or(ApiError::App(
+        rustchat_application::error::AppError::internal("notification service unavailable"),
+    ))?;
+    Ok(Json(service.preferences(auth.user.id, id).await?))
+}
+
+pub async fn set_notification_preferences(
+    State(state): State<AppState>,
+    AuthUser(auth): AuthUser,
+    Path(raw): Path<String>,
+    ApiJson(body): ApiJson<SetNotificationPreferences>,
+) -> Result<Json<rustchat_application::ports::ConversationNotificationPreferences>, ApiError> {
+    let id = parse_id(&raw)?;
+    state.conversations.get(auth.user.id, id).await?;
+    let service = state.notifications.as_deref().ok_or(ApiError::App(
+        rustchat_application::error::AppError::internal("notification service unavailable"),
+    ))?;
+    Ok(Json(
+        service
+            .set_preferences(
+                auth.user.id,
+                id,
+                body.messages_enabled,
+                body.mentions_enabled,
+                body.muted,
+                body.muted_until,
+            )
+            .await?,
+    ))
+}
+
 pub async fn members(
     State(state): State<AppState>,
     AuthUser(auth): AuthUser,
